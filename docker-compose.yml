@@ -2,8 +2,6 @@ services:
   app:
     build: .
     container_name: login_service
-    entrypoint:
-      - "/bin/login_service"
     environment:
       DATABASE_URL: "postgresql://postgres:pg1234@pgdb:5432/login_service?sslmode=disable"
       PORT: "5000"
