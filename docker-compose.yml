@@ -1,0 +1,34 @@
+services:
+  app:
+    build: .
+    container_name: login_service
+    entrypoint:
+      - "/bin/login_service"
+    environment:
+      DATABASE_URL: "postgresql://postgres:pg1234@pgdb:5432/login_service?sslmode=disable"
+      PORT: "5000"
+      LOG_LEVEL: ${LOG_LEVEL}
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    container_name: pgdb
+    image: postgres:17.2
+    environment:
+      POSTGRES_DB: "login_service"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "pg1234"
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./sql/init_db.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-U", "postgres", "-d", "login_service"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
