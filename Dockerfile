@@ -1,12 +1,16 @@
 FROM golang:1.23.8-alpine3.20 AS build
 
-WORKDIR /usr/local/go/src
+WORKDIR /app
 
-COPY ./app/ /usr/local/go/src
-
+COPY ./app/go.mod ./app/go.sum ./
 RUN go mod download
-RUN GOOS=linux GOARCH=amd64 go build -mod=readonly -o login_service cmd/main.go
+
+COPY ./app/ ./
+RUN GOOS=linux GOARCH=amd64 go build -o login_service ./cmd/main.go
 
 FROM scratch
-COPY --from=build /usr/local/go/src/login_service /bin/login_service
+COPY --from=build /app/login_service /bin/login_service
+
+EXPOSE 5000
+
 ENTRYPOINT ["/bin/login_service"]
