@@ -2,9 +2,9 @@ package user
 
 import (
 	"errors"
+	"log/slog"
 
 	"login/internals/models"
-	"login/pkg/logger"
 	"login/pkg/tokens"
 
 	"golang.org/x/crypto/bcrypt"
@@ -27,18 +27,18 @@ var (
 )
 
 type UserService struct {
-	log *logger.Logger
+	log *slog.Logger
 	UserRepository
 }
 
-func NewService(repo UserRepository, log *logger.Logger) *UserService {
+func NewService(repo UserRepository, log *slog.Logger) *UserService {
 	return &UserService{log, repo}
 }
 
 func (us *UserService) Registration(email, nickname, password string) (string, string, string, error) {
 	candidate, err := us.SelectUserByEmail(email)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", us.log.String("error:", err.Error()))
+		us.log.Error("SelectUserByEmail", "error", err.Error())
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	} else if candidate != nil {
 		return "", "", "", errors.Join(errStatusBadRequest, errEmailExist)
@@ -46,7 +46,7 @@ func (us *UserService) Registration(email, nickname, password string) (string, s
 
 	candidate, err = us.SelectUserByNickname(nickname)
 	if err != nil {
-		us.log.Error("SelectUserByNickname", us.log.String("error:", err.Error()))
+		us.log.Error("SelectUserByNickname", "error", err.Error())
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	} else if candidate != nil {
 		return "", "", "", errors.Join(errStatusBadRequest, errNicknameExist)
@@ -54,19 +54,19 @@ func (us *UserService) Registration(email, nickname, password string) (string, s
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), salt)
 	if err != nil {
-		us.log.Error("GenerateFromPassword", us.log.String("error:", err.Error()))
+		us.log.Error("GenerateFromPassword", "error", err.Error())
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	}
 
 	id, err := us.CreateUser(email, nickname, string(hash))
 	if err != nil {
-		us.log.Error("CreateUser", us.log.String("error:", err.Error()))
+		us.log.Error("CreateUser", "error", err.Error())
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	}
 
 	token, err := tokens.GenerateTokens(id)
 	if err != nil {
-		us.log.Error("GenerateTokens", us.log.String("error:", err.Error()))
+		us.log.Error("GenerateTokens", "error", err.Error())
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -76,12 +76,12 @@ func (us *UserService) Registration(email, nickname, password string) (string, s
 func (us *UserService) Login(param, password string) (string, string, string, error) {
 	user, err := us.SelectUserByEmail(param)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", us.log.String("error:", err.Error()))
+		us.log.Error("SelectUserByEmail", "error", err.Error())
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	} else if user == nil {
 		user, err = us.SelectUserByNickname(param)
 		if err != nil {
-			us.log.Error("SelectUserByNickname", us.log.String("error:", err.Error()))
+			us.log.Error("SelectUserByNickname", "error", err.Error())
 			return "", "", "", errors.Join(errStatusInternal, errInternal)
 		} else if user == nil {
 			return "", "", "", errors.Join(errStatusBadRequest, errUserNotFound)
@@ -89,7 +89,7 @@ func (us *UserService) Login(param, password string) (string, string, string, er
 	}
 
 	if cost, _ := bcrypt.Cost([]byte(user.Password)); cost != salt {
-		us.log.Error("Check password", us.log.String("error:", "incorrect cost"))
+		us.log.Error("Check password", "error", "incorrect cost")
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -100,7 +100,7 @@ func (us *UserService) Login(param, password string) (string, string, string, er
 
 	token, err := tokens.GenerateTokens(user.Id)
 	if err != nil {
-		us.log.Error("GenerateTokens", us.log.String("error:", err.Error()))
+		us.log.Error("GenerateTokens", "error", err.Error())
 		return "", "", "", errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -110,7 +110,7 @@ func (us *UserService) Login(param, password string) (string, string, string, er
 func (us *UserService) GetUser(id string) (*models.User, error) {
 	user, err := us.SelectUserById(id)
 	if err != nil {
-		us.log.Error("SelectUserById", us.log.String("error:", err.Error()))
+		us.log.Error("SelectUserById", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	} else if user == nil {
 		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
@@ -124,7 +124,7 @@ func (us *UserService) GetUser(id string) (*models.User, error) {
 func (us *UserService) GetAllUsers(limit, offset uint64) ([]models.User, error) {
 	users, err := us.SelectAllUsers(limit, offset)
 	if err != nil {
-		us.log.Error("SelectAllUsers", us.log.String("error:", err.Error()))
+		us.log.Error("SelectAllUsers", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -138,7 +138,7 @@ func (us *UserService) GetAllUsers(limit, offset uint64) ([]models.User, error) 
 func (us *UserService) RefreshPassword(email, newPassword string) (string, error) {
 	user, err := us.SelectUserByEmail(email)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", us.log.String("error:", err.Error()))
+		us.log.Error("SelectUserByEmail", "error", err.Error())
 		return "", errors.Join(errStatusInternal, errInternal)
 	} else if user == nil {
 		return "", errors.Join(errStatusBadRequest, errIncorrectEmail)
@@ -146,13 +146,13 @@ func (us *UserService) RefreshPassword(email, newPassword string) (string, error
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), salt)
 	if err != nil {
-		us.log.Error("GenerateFromPassword", us.log.String("error:", err.Error()))
+		us.log.Error("GenerateFromPassword", "error", err.Error())
 		return "", errors.Join(errStatusInternal, errInternal)
 	}
 
 	user.Password = string(hash)
 	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", us.log.String("error:", err.Error()))
+		us.log.Error("UpdateUser", "error", err.Error())
 		return "", errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -162,14 +162,14 @@ func (us *UserService) RefreshPassword(email, newPassword string) (string, error
 func (us *UserService) UpdatePassword(id string, oldPassword, newPassword string) (*models.User, error) {
 	user, err := us.SelectUserById(id)
 	if err != nil {
-		us.log.Error("SelectUserById", us.log.String("error:", err.Error()))
+		us.log.Error("SelectUserById", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	} else if user == nil {
 		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
 	}
 
 	if cost, _ := bcrypt.Cost([]byte(user.Password)); cost != salt {
-		us.log.Error("Check password", us.log.String("error:", "incorrect cost"))
+		us.log.Error("Check password", "error", "incorrect cost")
 		return nil, errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -180,13 +180,13 @@ func (us *UserService) UpdatePassword(id string, oldPassword, newPassword string
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), salt)
 	if err != nil {
-		us.log.Error("GenerateFromPassword", us.log.String("error:", err.Error()))
+		us.log.Error("GenerateFromPassword", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	}
 
 	user.Password = string(hash)
 	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", us.log.String("error:", err.Error()))
+		us.log.Error("UpdateUser", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -196,7 +196,7 @@ func (us *UserService) UpdatePassword(id string, oldPassword, newPassword string
 func (us *UserService) UpdateNickname(id string, newNickname string) (*models.User, error) {
 	user, err := us.SelectUserById(id)
 	if err != nil {
-		us.log.Error("SelectUserById", us.log.String("error:", err.Error()))
+		us.log.Error("SelectUserById", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	} else if user == nil {
 		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
@@ -204,7 +204,7 @@ func (us *UserService) UpdateNickname(id string, newNickname string) (*models.Us
 
 	collision, err := us.SelectUserByNickname(newNickname)
 	if err != nil {
-		us.log.Error("SelectUserByNickname", us.log.String("error", err.Error()))
+		us.log.Error("SelectUserByNickname", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	} else if collision != nil {
 		return nil, errors.Join(errStatusBadRequest, errNicknameExist)
@@ -212,7 +212,7 @@ func (us *UserService) UpdateNickname(id string, newNickname string) (*models.Us
 
 	user.Nickname = newNickname
 	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", us.log.String("error:", err.Error()))
+		us.log.Error("UpdateUser", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -222,7 +222,7 @@ func (us *UserService) UpdateNickname(id string, newNickname string) (*models.Us
 func (us *UserService) UpdateEmail(id string, newEmail string) (*models.User, error) {
 	user, err := us.SelectUserById(id)
 	if err != nil {
-		us.log.Error("Select UserById", us.log.String("error:", err.Error()))
+		us.log.Error("Select UserById", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	} else if user == nil {
 		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
@@ -230,7 +230,7 @@ func (us *UserService) UpdateEmail(id string, newEmail string) (*models.User, er
 
 	collision, err := us.SelectUserByEmail(newEmail)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", us.log.String("error", err.Error()))
+		us.log.Error("SelectUserByEmail", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	} else if collision != nil {
 		return nil, errors.Join(errStatusBadRequest, errEmailExist)
@@ -238,7 +238,7 @@ func (us *UserService) UpdateEmail(id string, newEmail string) (*models.User, er
 
 	user.Email = newEmail
 	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", us.log.String("error:", err.Error()))
+		us.log.Error("UpdateUser", "error", err.Error())
 		return nil, errors.Join(errStatusInternal, errInternal)
 	}
 
@@ -247,7 +247,7 @@ func (us *UserService) UpdateEmail(id string, newEmail string) (*models.User, er
 
 func (us *UserService) DeleteUserService(id string) error {
 	if err := us.DeleteUser(id); err != nil {
-		us.log.Error("DeleteUser", us.log.String("error:", err.Error()))
+		us.log.Error("DeleteUser", "error", err.Error())
 		return errors.Join(errStatusInternal, errInternal)
 	}
 

@@ -1,13 +1,11 @@
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION "uuid-ossp";
 
-CREATE TABLE IF NOT EXISTS users (
-  id UUID NOT NULL,
-  email VARCHAR(100) UNIQUE NOT NULL,
-  nickname VARCHAR(16) UNIQUE NOT NULL,
-  password VARCHAR(200) NOT NULL
+CREATE TABLE users (
+  id UUID PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  nickname TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL
 );
-
-ALTER TABLE users ADD PRIMARY KEY (id);
 
 INSERT INTO
   users (id, email, nickname, password)

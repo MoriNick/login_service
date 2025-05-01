@@ -4,14 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
-	"login/pkg/logger"
 	"login/pkg/tokens"
 )
 
-func Auth(next http.HandlerFunc) http.HandlerFunc {
-	log := logger.GetLogger()
+func AuthMiddleware(l *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return auth(l, next)
+	}
+}
+
+func auth(log *slog.Logger, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Info("Auth user")
 
@@ -36,18 +41,18 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 				http.SetCookie(w, &http.Cookie{Name: "access_token", Value: tks.GetAccess(), HttpOnly: true})
 				http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: tks.GetRefresh(), HttpOnly: true})
 			} else {
-				log.Error("Auth error", log.String("err", err.Error()))
+				log.Error("Auth error", "error", err.Error())
 				errorHandler(w, http.StatusInternalServerError, "Internal error")
 				return
 			}
 		}
 
-		log.Info("Successful auth", log.String("user_id", tks.GetId()))
+		log.Info("Successful auth", "user_id", tks.GetId())
 
 		rctx := r.Context()
 		nctx := context.WithValue(rctx, "user_id", tks.GetId())
 
-		next(w, r.WithContext(nctx))
+		next.ServeHTTP(w, r.WithContext(nctx))
 	}
 }
 

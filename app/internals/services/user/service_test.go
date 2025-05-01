@@ -1,10 +1,11 @@
 package user
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"login/internals/models"
 	repo "login/internals/services/user/mock"
-	"login/pkg/logger"
 	"os"
 	"testing"
 
@@ -12,6 +13,18 @@ import (
 	"go.uber.org/mock/gomock"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type discardHandler struct{}
+
+func (dh discardHandler) Enabled(context.Context, slog.Level) bool  { return false }
+func (dh discardHandler) Handle(context.Context, slog.Record) error { return nil }
+func (dh discardHandler) WithAttrs(attrs []slog.Attr) slog.Handler  { return dh }
+func (dh discardHandler) WithGroup(name string) slog.Handler        { return dh }
+
+func getStubLogger() *slog.Logger {
+	l := slog.New(discardHandler{})
+	return l
+}
 
 // Check all errors in service.Registration()
 func TestRegistration(t *testing.T) {
@@ -22,7 +35,7 @@ func TestRegistration(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := logger.GetStubLogger()
+	log := getStubLogger()
 	service := NewService(mockRepo, log)
 
 	mockSelectOut := &models.User{Id: "id", Email: "email", Nickname: "Nicky", Password: "sss"}
@@ -129,7 +142,7 @@ func TestLogin(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := logger.GetStubLogger()
+	log := getStubLogger()
 	service := NewService(mockRepo, log)
 
 	type selectEmailType struct {
@@ -223,7 +236,7 @@ func TestGetUser(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := logger.GetStubLogger()
+	log := getStubLogger()
 	service := NewService(mockRepo, log)
 
 	type selectIdType struct {
@@ -269,7 +282,7 @@ func TestRefreshPassword(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := logger.GetStubLogger()
+	log := getStubLogger()
 	service := NewService(mockRepo, log)
 
 	type selectEmailType struct {
@@ -334,7 +347,7 @@ func TestUpdatePassword(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := logger.GetStubLogger()
+	log := getStubLogger()
 	service := NewService(mockRepo, log)
 
 	type selectIdType struct {
@@ -428,7 +441,7 @@ func TestUpdateNickname(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := logger.GetStubLogger()
+	log := getStubLogger()
 	service := NewService(mockRepo, log)
 
 	type selectIdType struct {
@@ -543,7 +556,7 @@ func TestUpdateEmail(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := logger.GetStubLogger()
+	log := getStubLogger()
 	service := NewService(mockRepo, log)
 
 	type selectIdType struct {

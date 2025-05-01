@@ -1,8 +1,9 @@
 package middlewares
 
 import (
+	"context"
 	"encoding/json"
-	"login/pkg/logger"
+	"log/slog"
 	"login/pkg/tokens"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+type discardHandler struct{}
+
+func (dh discardHandler) Enabled(context.Context, slog.Level) bool  { return false }
+func (dh discardHandler) Handle(context.Context, slog.Record) error { return nil }
+func (dh discardHandler) WithAttrs(attrs []slog.Attr) slog.Handler  { return dh }
+func (dh discardHandler) WithGroup(name string) slog.Handler        { return dh }
+
+func getStubLogger() *slog.Logger {
+	return slog.New(discardHandler{})
+}
 
 func generateTestToken(id string) string {
 	if id == "" {
@@ -51,7 +63,7 @@ func nextFunc(w http.ResponseWriter, r *http.Request) {
 func TestAuth(t *testing.T) {
 	_ = os.Setenv("JWT_SECRET", "secret")
 	defer os.Clearenv()
-	_ = logger.GetStubLogger()
+	log := getStubLogger()
 
 	cases := []struct {
 		name      string
@@ -115,7 +127,7 @@ func TestAuth(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 
-			auth := Auth(nextFunc)
+			auth := auth(log, http.HandlerFunc(nextFunc))
 			auth(w, req)
 
 			require.Equal(t, tCase.expStatus, w.Code)

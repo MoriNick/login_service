@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"login/internals/database/repositories"
-	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -13,18 +12,22 @@ type DB struct {
 	config *pgxpool.Config
 }
 
-func NewStorage() (*DB, error) {
-	config := initConfig()
-	pool, _ := pgxpool.NewWithConfig(context.Background(), config)
-	err := pool.Ping(context.Background())
+func NewStorage(ctx context.Context, cfg *DBConfig) (*DB, error) {
+	config := initConfig(cfg.ConnString())
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	err = pool.Ping(ctx)
 	return &DB{pool, config}, err
 }
 
-func initConfig() *pgxpool.Config {
-	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+func initConfig(connString string) *pgxpool.Config {
+	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil
 	}
+
 	return config
 }
 
