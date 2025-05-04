@@ -171,7 +171,7 @@ func TestSQLAndReleaseConnection(t *testing.T) {
 					Scan(gomock.AssignableToTypeOf(&testUser.Id)).
 					Return(tCase.expErr).
 					Times(1)
-				_, err = repo.CreateUser(testUser.Email, testUser.Nickname, testUser.Password)
+				_, err = repo.CreateUser(ctx, testUser.Email, testUser.Nickname, testUser.Password)
 			case selectById:
 				rowMock.EXPECT().
 					Scan(
@@ -182,7 +182,7 @@ func TestSQLAndReleaseConnection(t *testing.T) {
 					).
 					Return(tCase.expErr).
 					Times(1)
-				_, err = repo.SelectUserById(testUser.Id)
+				_, err = repo.SelectUserById(ctx, testUser.Id)
 			case selectByEmail:
 				rowMock.EXPECT().
 					Scan(
@@ -193,7 +193,7 @@ func TestSQLAndReleaseConnection(t *testing.T) {
 					).
 					Return(tCase.expErr).
 					Times(1)
-				_, err = repo.SelectUserByEmail(testUser.Email)
+				_, err = repo.SelectUserByEmail(ctx, testUser.Email)
 			case selectByNickname:
 				rowMock.EXPECT().
 					Scan(
@@ -204,13 +204,13 @@ func TestSQLAndReleaseConnection(t *testing.T) {
 					).
 					Return(tCase.expErr).
 					Times(1)
-				_, err = repo.SelectUserByNickname(testUser.Nickname)
+				_, err = repo.SelectUserByNickname(ctx, testUser.Nickname)
 			case selectAll:
-				_, err = repo.SelectAllUsers(limit, offset)
+				_, err = repo.SelectAllUsers(ctx, limit, offset)
 			case updateUser:
-				err = repo.UpdateUser(&testUser)
+				err = repo.UpdateUser(ctx, &testUser)
 			case deleteUser:
-				err = repo.DeleteUser(testUser.Id)
+				err = repo.DeleteUser(ctx, testUser.Id)
 			}
 
 			require.Error(t, err)

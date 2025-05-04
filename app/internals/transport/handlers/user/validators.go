@@ -1,9 +1,10 @@
 package user
 
 import (
-	"encoding/hex"
 	"errors"
 	"regexp"
+
+	"github.com/go-playground/validator/v10"
 )
 
 var (
@@ -14,50 +15,48 @@ var (
 	errInvalidUserId    = errors.New("Invalid user id")
 )
 
-func validateUserId(id string) error {
-	if len(id) != 36 {
-		return errInvalidUserId
-	}
+var validate *validator.Validate
 
-	src := id[0:8] + id[9:13] + id[14:18] + id[19:23] + id[24:]
-	_, err := hex.DecodeString(src)
+func InitValidator() error {
+	nicknameRegexp, err := regexp.Compile("^[a-zA-Z][a-zA-Z0-9]{3,14}$")
 	if err != nil {
-		return errInvalidUserId
+		return err
 	}
 
-	if id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
-		return errInvalidUserId
-	}
+	validate = validator.New(validator.WithRequiredStructEnabled())
+	_ = validate.RegisterValidation("nickname", func(fl validator.FieldLevel) bool {
+		return nicknameRegexp.MatchString(fl.Field().String())
+	})
+	_ = validate.RegisterValidation("password", func(fl validator.FieldLevel) bool {
+		return len(fl.Field().String()) > 7
+	})
 
 	return nil
 }
 
-func validateEmail(email string) error {
-	if len(email) > 100 {
-		return errInvalidEmail
+func validateUserId(id string) error {
+	if err := validate.Var(id, "uuid4"); err != nil {
+		return errInvalidUserId
 	}
+	return nil
+}
 
-	pattern := `^[a-zA-Z0-9]+@([a-zA-Z0-9]+\.)+[a-zA-Z0-9]+$`
-	isValid, _ := regexp.MatchString(pattern, email)
-
-	if !isValid {
+func validateEmail(email string) error {
+	if err := validate.Var(email, "email"); err != nil {
 		return errInvalidEmail
 	}
 	return nil
 }
 
 func validateNickname(nickname string) error {
-	pattern := `^[a-zA-Z][a-zA-Z0-9]{3,14}$`
-	isValid, _ := regexp.MatchString(pattern, nickname)
-
-	if !isValid {
+	if err := validate.Var(nickname, "nickname"); err != nil {
 		return errInvalidNickname
 	}
 	return nil
 }
 
 func validatePassword(password string) error {
-	if len(password) < 8 {
+	if err := validate.Var(password, "password"); err != nil {
 		return errInvalidPassword
 	}
 	return nil

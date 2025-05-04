@@ -1,7 +1,9 @@
 package user
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"login/internals/models"
@@ -21,11 +23,6 @@ var (
 	errIncorrectEmail    = errors.New("Incorrect email")
 )
 
-var (
-	errStatusBadRequest = errors.New("400")
-	errStatusInternal   = errors.New("500")
-)
-
 type UserService struct {
 	log *slog.Logger
 	UserRepository
@@ -35,85 +32,75 @@ func NewService(repo UserRepository, log *slog.Logger) *UserService {
 	return &UserService{log, repo}
 }
 
-func (us *UserService) Registration(email, nickname, password string) (string, string, string, error) {
-	candidate, err := us.SelectUserByEmail(email)
+func (us *UserService) Registration(ctx context.Context, email, nickname, password string) (string, string, string, error) {
+	candidate, err := us.SelectUserByEmail(ctx, email)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", "error", err.Error())
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "SelectUserByEmail", ClientMessage: errInternal.Error(), Err: err}
 	} else if candidate != nil {
-		return "", "", "", errors.Join(errStatusBadRequest, errEmailExist)
+		return "", "", "", &ServiceError{Name: "ClientError", ClientMessage: errEmailExist.Error(), Err: nil}
 	}
 
-	candidate, err = us.SelectUserByNickname(nickname)
+	candidate, err = us.SelectUserByNickname(ctx, nickname)
 	if err != nil {
-		us.log.Error("SelectUserByNickname", "error", err.Error())
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "SelectUserByNickname", ClientMessage: errInternal.Error(), Err: err}
 	} else if candidate != nil {
-		return "", "", "", errors.Join(errStatusBadRequest, errNicknameExist)
+		return "", "", "", &ServiceError{Name: "ClientError", ClientMessage: errNicknameExist.Error(), Err: nil}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), salt)
 	if err != nil {
-		us.log.Error("GenerateFromPassword", "error", err.Error())
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "GenerateFromPassword", ClientMessage: errInternal.Error(), Err: err}
 	}
 
-	id, err := us.CreateUser(email, nickname, string(hash))
+	id, err := us.CreateUser(ctx, email, nickname, string(hash))
 	if err != nil {
-		us.log.Error("CreateUser", "error", err.Error())
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "CreateUser", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	token, err := tokens.GenerateTokens(id)
 	if err != nil {
-		us.log.Error("GenerateTokens", "error", err.Error())
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "GenerateTokens", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	return id, token.GetAccess(), token.GetRefresh(), nil
 }
 
-func (us *UserService) Login(param, password string) (string, string, string, error) {
-	user, err := us.SelectUserByEmail(param)
+func (us *UserService) Login(ctx context.Context, param, password string) (string, string, string, error) {
+	user, err := us.SelectUserByEmail(ctx, param)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", "error", err.Error())
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "SelectUserByEmail", ClientMessage: errInternal.Error(), Err: err}
 	} else if user == nil {
-		user, err = us.SelectUserByNickname(param)
+		user, err = us.SelectUserByNickname(ctx, param)
 		if err != nil {
-			us.log.Error("SelectUserByNickname", "error", err.Error())
-			return "", "", "", errors.Join(errStatusInternal, errInternal)
+			return "", "", "", &ServiceError{Name: "SelectUserByNickname", ClientMessage: errInternal.Error(), Err: err}
 		} else if user == nil {
-			return "", "", "", errors.Join(errStatusBadRequest, errUserNotFound)
+			return "", "", "", &ServiceError{Name: "ClientError", ClientMessage: errUserNotFound.Error(), Err: nil}
 		}
 	}
 
 	if cost, _ := bcrypt.Cost([]byte(user.Password)); cost != salt {
-		us.log.Error("Check password", "error", "incorrect cost")
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "Cost", ClientMessage: errInternal.Error(), Err: fmt.Errorf("incorrect cost for check password")}
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	if err != nil {
-		return "", "", "", errors.Join(errStatusBadRequest, errIncorrectPassword)
+		return "", "", "", &ServiceError{Name: "ClientError", ClientMessage: errIncorrectPassword.Error(), Err: nil}
 	}
 
 	token, err := tokens.GenerateTokens(user.Id)
 	if err != nil {
-		us.log.Error("GenerateTokens", "error", err.Error())
-		return "", "", "", errors.Join(errStatusInternal, errInternal)
+		return "", "", "", &ServiceError{Name: "GenerateTokens", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	return user.Id, token.GetAccess(), token.GetRefresh(), nil
 }
 
-func (us *UserService) GetUser(id string) (*models.User, error) {
-	user, err := us.SelectUserById(id)
+func (us *UserService) GetUser(ctx context.Context, id string) (*models.User, error) {
+	user, err := us.SelectUserById(ctx, id)
 	if err != nil {
-		us.log.Error("SelectUserById", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "SelectUserById", ClientMessage: errInternal.Error(), Err: err}
 	} else if user == nil {
-		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
+		return nil, &ServiceError{Name: "ClientError", ClientMessage: errUserNotFound.Error(), Err: nil}
 	}
 
 	user.Password = ""
@@ -121,11 +108,10 @@ func (us *UserService) GetUser(id string) (*models.User, error) {
 	return user, nil
 }
 
-func (us *UserService) GetAllUsers(limit, offset uint64) ([]models.User, error) {
-	users, err := us.SelectAllUsers(limit, offset)
+func (us *UserService) GetAllUsers(ctx context.Context, limit, offset uint64) ([]models.User, error) {
+	users, err := us.SelectAllUsers(ctx, limit, offset)
 	if err != nil {
-		us.log.Error("SelectAllUsers", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "SelectAllUsers", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	for i := range users {
@@ -135,120 +121,85 @@ func (us *UserService) GetAllUsers(limit, offset uint64) ([]models.User, error) 
 	return users, nil
 }
 
-func (us *UserService) RefreshPassword(email, newPassword string) (string, error) {
-	user, err := us.SelectUserByEmail(email)
+func (us *UserService) UpdatePassword(ctx context.Context, id string, oldPassword, newPassword string) (*models.User, error) {
+	user, err := us.SelectUserById(ctx, id)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", "error", err.Error())
-		return "", errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "SelectUserById", ClientMessage: errInternal.Error(), Err: err}
 	} else if user == nil {
-		return "", errors.Join(errStatusBadRequest, errIncorrectEmail)
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), salt)
-	if err != nil {
-		us.log.Error("GenerateFromPassword", "error", err.Error())
-		return "", errors.Join(errStatusInternal, errInternal)
-	}
-
-	user.Password = string(hash)
-	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", "error", err.Error())
-		return "", errors.Join(errStatusInternal, errInternal)
-	}
-
-	return user.Id, nil
-}
-
-func (us *UserService) UpdatePassword(id string, oldPassword, newPassword string) (*models.User, error) {
-	user, err := us.SelectUserById(id)
-	if err != nil {
-		us.log.Error("SelectUserById", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
-	} else if user == nil {
-		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
+		return nil, &ServiceError{Name: "ClientError", ClientMessage: errUserNotFound.Error(), Err: nil}
 	}
 
 	if cost, _ := bcrypt.Cost([]byte(user.Password)); cost != salt {
-		us.log.Error("Check password", "error", "incorrect cost")
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "Cost", ClientMessage: errInternal.Error(), Err: fmt.Errorf("incorrect cost for check password")}
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword))
 	if err != nil {
-		return nil, errors.Join(errStatusBadRequest, errIncorrectPassword)
+		return nil, &ServiceError{Name: "ClientError", ClientMessage: errIncorrectPassword.Error(), Err: nil}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), salt)
 	if err != nil {
-		us.log.Error("GenerateFromPassword", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "GenerateFromPassword", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	user.Password = string(hash)
-	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+	if err := us.UpdateUser(ctx, user); err != nil {
+		return nil, &ServiceError{Name: "UpdateUser", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	return user, nil
 }
 
-func (us *UserService) UpdateNickname(id string, newNickname string) (*models.User, error) {
-	user, err := us.SelectUserById(id)
+func (us *UserService) UpdateNickname(ctx context.Context, id string, newNickname string) (*models.User, error) {
+	user, err := us.SelectUserById(ctx, id)
 	if err != nil {
-		us.log.Error("SelectUserById", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "SelectUserById", ClientMessage: errInternal.Error(), Err: err}
 	} else if user == nil {
-		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
+		return nil, &ServiceError{Name: "ClientError", ClientMessage: errUserNotFound.Error(), Err: nil}
 	}
 
-	collision, err := us.SelectUserByNickname(newNickname)
+	collision, err := us.SelectUserByNickname(ctx, newNickname)
 	if err != nil {
-		us.log.Error("SelectUserByNickname", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "SelectUserByNickname", ClientMessage: errInternal.Error(), Err: err}
 	} else if collision != nil {
-		return nil, errors.Join(errStatusBadRequest, errNicknameExist)
+		return nil, &ServiceError{Name: "ClientError", ClientMessage: errNicknameExist.Error(), Err: nil}
 	}
 
 	user.Nickname = newNickname
-	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+	if err := us.UpdateUser(ctx, user); err != nil {
+		return nil, &ServiceError{Name: "UpdateUser", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	return user, nil
 }
 
-func (us *UserService) UpdateEmail(id string, newEmail string) (*models.User, error) {
-	user, err := us.SelectUserById(id)
+func (us *UserService) UpdateEmail(ctx context.Context, id string, newEmail string) (*models.User, error) {
+	user, err := us.SelectUserById(ctx, id)
 	if err != nil {
-		us.log.Error("Select UserById", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "SelectUserById", ClientMessage: errInternal.Error(), Err: err}
 	} else if user == nil {
-		return nil, errors.Join(errStatusBadRequest, errUserNotFound)
+		return nil, &ServiceError{Name: "ClientError", ClientMessage: errUserNotFound.Error(), Err: nil}
 	}
 
-	collision, err := us.SelectUserByEmail(newEmail)
+	collision, err := us.SelectUserByEmail(ctx, newEmail)
 	if err != nil {
-		us.log.Error("SelectUserByEmail", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+		return nil, &ServiceError{Name: "SelectUserByEmail", ClientMessage: errInternal.Error(), Err: err}
 	} else if collision != nil {
-		return nil, errors.Join(errStatusBadRequest, errEmailExist)
+		return nil, &ServiceError{Name: "ClientError", ClientMessage: errEmailExist.Error(), Err: nil}
 	}
 
 	user.Email = newEmail
-	if err := us.UpdateUser(user); err != nil {
-		us.log.Error("UpdateUser", "error", err.Error())
-		return nil, errors.Join(errStatusInternal, errInternal)
+	if err := us.UpdateUser(ctx, user); err != nil {
+		return nil, &ServiceError{Name: "UpdateUser", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	return user, nil
 }
 
-func (us *UserService) DeleteUserService(id string) error {
-	if err := us.DeleteUser(id); err != nil {
-		us.log.Error("DeleteUser", "error", err.Error())
-		return errors.Join(errStatusInternal, errInternal)
+func (us *UserService) DeleteUserService(ctx context.Context, id string) error {
+	if err := us.DeleteUser(ctx, id); err != nil {
+		return &ServiceError{Name: "DeleteUser", ClientMessage: errInternal.Error(), Err: err}
 	}
 
 	return nil

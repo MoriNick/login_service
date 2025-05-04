@@ -4,15 +4,15 @@ services:
     container_name: login_service
     environment:
       DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
+      DB_PORT: ${DB_PORT:-5432}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_SSLMODE: ${DB_SSLMODE}
-      PORT: "5000"
+      PORT: ${PORT:-5000}
       LOG_LEVEL: ${LOG_LEVEL}
       JWT_SECRET: ${JWT_SECRET}
     ports:
-      - "5000:5000"
+      - ${PORT:-5000}:${PORT:-5000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -22,10 +22,10 @@ services:
     image: postgres:17.2
     environment:
       POSTGRES_DB: "login_service"
-      POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "pg1234"
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - ${DB_PORT:-5432}:${DB_PORT:-5432}
     volumes:
       - ./sql/init_db.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
     healthcheck:

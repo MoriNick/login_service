@@ -24,19 +24,26 @@ func main() {
 	mainCtx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(l)
-	router := chi.NewRouter()
-	cfg, err := NewConfig()
+	cfg, err := newConfig()
 	if err != nil {
-		l.Error("Database configuration error", "error", err.Error())
+		slog.New(slog.NewJSONHandler(os.Stdout, nil)).Error("Configuration error", "error", err.Error())
 		os.Exit(1)
 	}
+
+	l := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	slog.SetDefault(l)
+
+	router := chi.NewRouter()
 
 	DBConfig := cfg.GetDBConfig()
 	storage, err := db.NewStorage(mainCtx, DBConfig)
 	if err != nil {
 		l.Error("Database error", "error", err.Error())
+		os.Exit(1)
+	}
+
+	if err := uh.InitValidator(); err != nil {
+		l.Error("Init validator error", "error", err.Error())
 		os.Exit(1)
 	}
 

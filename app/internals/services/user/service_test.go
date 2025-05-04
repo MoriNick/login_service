@@ -37,6 +37,7 @@ func TestRegistration(t *testing.T) {
 	mockRepo := repo.NewMockUserRepository(ctrl)
 	log := getStubLogger()
 	service := NewService(mockRepo, log)
+	ctx := context.Background()
 
 	mockSelectOut := &models.User{Id: "id", Email: "email", Nickname: "Nicky", Password: "sss"}
 
@@ -69,13 +70,13 @@ func TestRegistration(t *testing.T) {
 			name:        "select_by_email_exist",
 			email:       "email",
 			selectEmail: &selectEmailType{candidate: mockSelectOut},
-			expErr:      errors.Join(errStatusBadRequest, errEmailExist),
+			expErr:      &ServiceError{ClientMessage: errEmailExist.Error()},
 		},
 		{
 			name:        "select_by_email_error",
 			email:       "email",
 			selectEmail: &selectEmailType{err: errors.New("database error")},
-			expErr:      errors.Join(errStatusInternal, errInternal),
+			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:           "select_by_nickname_exist",
@@ -83,7 +84,7 @@ func TestRegistration(t *testing.T) {
 			nickname:       "nick",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{candidate: mockSelectOut},
-			expErr:         errors.Join(errStatusBadRequest, errNicknameExist),
+			expErr:         &ServiceError{ClientMessage: errNicknameExist.Error()},
 		},
 		{
 			name:           "select_by_nickname_error",
@@ -91,7 +92,7 @@ func TestRegistration(t *testing.T) {
 			nickname:       "nick",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{err: errors.New("database error")},
-			expErr:         errors.Join(errStatusInternal, errInternal),
+			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:           "create_user_error",
@@ -101,30 +102,30 @@ func TestRegistration(t *testing.T) {
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{nil, nil},
 			createUser:     &createUserType{err: errors.New("database error")},
-			expErr:         errors.Join(errStatusInternal, errInternal),
+			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
 		},
 	}
 
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
 			mockRepo.EXPECT().
-				SelectUserByEmail(tCase.email).
+				SelectUserByEmail(ctx, tCase.email).
 				Return(tCase.selectEmail.candidate, tCase.selectEmail.err).
 				Times(1)
 			if tCase.selectNickname != nil {
 				mockRepo.EXPECT().
-					SelectUserByNickname(tCase.nickname).
+					SelectUserByNickname(ctx, tCase.nickname).
 					Return(tCase.selectNickname.candidate, tCase.selectNickname.err).
 					Times(1)
 			}
 			if tCase.createUser != nil {
 				mockRepo.EXPECT().
-					CreateUser(tCase.email, tCase.nickname, gomock.AssignableToTypeOf(tCase.password)).
+					CreateUser(ctx, tCase.email, tCase.nickname, gomock.AssignableToTypeOf(tCase.password)).
 					Return(tCase.createUser.id, tCase.createUser.err).
 					Times(1)
 			}
 
-			_, _, _, err := service.Registration(tCase.email, tCase.nickname, tCase.password)
+			_, _, _, err := service.Registration(ctx, tCase.email, tCase.nickname, tCase.password)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})
@@ -144,6 +145,7 @@ func TestLogin(t *testing.T) {
 	mockRepo := repo.NewMockUserRepository(ctrl)
 	log := getStubLogger()
 	service := NewService(mockRepo, log)
+	ctx := context.Background()
 
 	type selectEmailType struct {
 		candidate *models.User
@@ -167,7 +169,7 @@ func TestLogin(t *testing.T) {
 			name:           "user_not_exist",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{nil, nil},
-			expErr:         errors.Join(errStatusBadRequest, errUserNotFound),
+			expErr:         &ServiceError{ClientMessage: errUserNotFound.Error()},
 		},
 		{
 			name:     "incorrect_salt",
@@ -181,7 +183,7 @@ func TestLogin(t *testing.T) {
 					Password: hashPassword("password", bcrypt.MinCost),
 				},
 			},
-			expErr: errors.Join(errStatusInternal, errInternal),
+			expErr: &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:     "incorrect_password",
@@ -195,35 +197,35 @@ func TestLogin(t *testing.T) {
 					Password: hashPassword("passsword", bcrypt.DefaultCost),
 				},
 			},
-			expErr: errors.Join(errStatusBadRequest, errIncorrectPassword),
+			expErr: &ServiceError{ClientMessage: errIncorrectPassword.Error()},
 		},
 		{
 			name:        "select_email_error",
 			selectEmail: &selectEmailType{err: errors.New("database error")},
-			expErr:      errors.Join(errStatusInternal, errInternal),
+			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:           "select_nickname_error",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{err: errors.New("database error")},
-			expErr:         errors.Join(errStatusInternal, errInternal),
+			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
 		},
 	}
 
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
 			mockRepo.EXPECT().
-				SelectUserByEmail(tCase.param).
+				SelectUserByEmail(ctx, tCase.param).
 				Return(tCase.selectEmail.candidate, tCase.selectEmail.err).
 				Times(1)
 			if tCase.selectNickname != nil {
 				mockRepo.EXPECT().
-					SelectUserByNickname(tCase.param).
+					SelectUserByNickname(ctx, tCase.param).
 					Return(tCase.selectNickname.candidate, tCase.selectNickname.err).
 					Times(1)
 			}
 
-			_, _, _, err := service.Login(tCase.param, tCase.password)
+			_, _, _, err := service.Login(ctx, tCase.param, tCase.password)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})
@@ -238,6 +240,7 @@ func TestGetUser(t *testing.T) {
 	mockRepo := repo.NewMockUserRepository(ctrl)
 	log := getStubLogger()
 	service := NewService(mockRepo, log)
+	ctx := context.Background()
 
 	type selectIdType struct {
 		candidate *models.User
@@ -253,83 +256,23 @@ func TestGetUser(t *testing.T) {
 		{
 			name:     "user_not_exist",
 			selectId: &selectIdType{nil, nil},
-			expErr:   errors.Join(errStatusBadRequest, errUserNotFound),
+			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
 		},
 		{
 			name:     "inernal_error",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   errors.Join(errStatusInternal, errInternal),
+			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
 		},
 	}
 
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
 			mockRepo.EXPECT().
-				SelectUserById(tCase.id).
+				SelectUserById(ctx, tCase.id).
 				Return(tCase.selectId.candidate, tCase.selectId.err).
 				Times(1)
 
-			_, err := service.GetUser(tCase.id)
-			require.Error(t, err)
-			require.EqualError(t, err, tCase.expErr.Error())
-		})
-	}
-}
-
-// Check all errors in service.RefreshPassword()
-func TestRefreshPassword(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRepo := repo.NewMockUserRepository(ctrl)
-	log := getStubLogger()
-	service := NewService(mockRepo, log)
-
-	type selectEmailType struct {
-		user *models.User
-		err  error
-	}
-
-	cases := []struct {
-		name        string
-		email       string
-		password    string
-		selectEmail *selectEmailType
-		updateError error
-		expErr      error
-	}{
-		{
-			name:        "email_not_exist",
-			selectEmail: &selectEmailType{nil, nil},
-			expErr:      errors.Join(errStatusBadRequest, errIncorrectEmail),
-		},
-		{
-			name:        "select_user_return_error",
-			selectEmail: &selectEmailType{err: errors.New("database error")},
-			expErr:      errors.Join(errStatusInternal, errInternal),
-		},
-		{
-			name:        "update_user_return_error",
-			selectEmail: &selectEmailType{user: &models.User{}},
-			updateError: errors.New("database error"),
-			expErr:      errors.Join(errStatusInternal, errInternal),
-		},
-	}
-
-	for _, tCase := range cases {
-		t.Run(tCase.name, func(t *testing.T) {
-			mockRepo.EXPECT().
-				SelectUserByEmail(tCase.email).
-				Return(tCase.selectEmail.user, tCase.selectEmail.err).
-				Times(1)
-			if tCase.updateError != nil {
-				mockRepo.EXPECT().
-					UpdateUser(tCase.selectEmail.user).
-					Return(tCase.updateError).
-					Times(1)
-			}
-
-			_, err := service.RefreshPassword(tCase.email, tCase.password)
+			_, err := service.GetUser(ctx, tCase.id)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})
@@ -349,6 +292,7 @@ func TestUpdatePassword(t *testing.T) {
 	mockRepo := repo.NewMockUserRepository(ctrl)
 	log := getStubLogger()
 	service := NewService(mockRepo, log)
+	ctx := context.Background()
 
 	type selectIdType struct {
 		user *models.User
@@ -367,12 +311,12 @@ func TestUpdatePassword(t *testing.T) {
 		{
 			name:     "select_user_return_error",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   errors.Join(errStatusInternal, errInternal),
+			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:     "user_not_found",
 			selectId: &selectIdType{nil, nil},
-			expErr:   errors.Join(errStatusBadRequest, errUserNotFound),
+			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
 		},
 		{
 			name:        "incorrect_cost_to_hash_password",
@@ -385,7 +329,7 @@ func TestUpdatePassword(t *testing.T) {
 					Password: hashPassword("old", bcrypt.MinCost),
 				},
 			},
-			expErr: errors.Join(errStatusInternal, errInternal),
+			expErr: &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:        "incorrect_password",
@@ -397,7 +341,7 @@ func TestUpdatePassword(t *testing.T) {
 					Password: hashPassword("another_old", bcrypt.DefaultCost),
 				},
 			},
-			expErr: errors.Join(errStatusBadRequest, errIncorrectPassword),
+			expErr: &ServiceError{ClientMessage: errIncorrectPassword.Error()},
 		},
 		{
 			name:        "update_user_return_error",
@@ -411,24 +355,24 @@ func TestUpdatePassword(t *testing.T) {
 				},
 			},
 			updateError: errors.New("database error"),
-			expErr:      errors.Join(errStatusInternal, errInternal),
+			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
 		},
 	}
 
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
 			mockRepo.EXPECT().
-				SelectUserById(tCase.id).
+				SelectUserById(ctx, tCase.id).
 				Return(tCase.selectId.user, tCase.selectId.err).
 				Times(1)
 			if tCase.updateError != nil {
 				mockRepo.EXPECT().
-					UpdateUser(tCase.selectId.user).
+					UpdateUser(ctx, tCase.selectId.user).
 					Return(tCase.updateError).
 					Times(1)
 			}
 
-			_, err := service.UpdatePassword(tCase.id, tCase.oldPassword, tCase.newPassword)
+			_, err := service.UpdatePassword(ctx, tCase.id, tCase.oldPassword, tCase.newPassword)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})
@@ -443,6 +387,7 @@ func TestUpdateNickname(t *testing.T) {
 	mockRepo := repo.NewMockUserRepository(ctrl)
 	log := getStubLogger()
 	service := NewService(mockRepo, log)
+	ctx := context.Background()
 
 	type selectIdType struct {
 		user *models.User
@@ -467,13 +412,13 @@ func TestUpdateNickname(t *testing.T) {
 			name:     "select_by_id_return_error",
 			id:       "id",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   errors.Join(errStatusInternal, errInternal),
+			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:     "user_not_found",
 			id:       "id",
 			selectId: &selectIdType{nil, nil},
-			expErr:   errors.Join(errStatusBadRequest, errUserNotFound),
+			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
 		},
 		{
 			name:        "select_by_nickname_return_error",
@@ -486,7 +431,7 @@ func TestUpdateNickname(t *testing.T) {
 				},
 			},
 			selectNickname: &selectNicknameType{nil, errors.New("database error")},
-			expErr:         errors.Join(errStatusInternal, errInternal),
+			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:        "nickname_collision",
@@ -504,7 +449,7 @@ func TestUpdateNickname(t *testing.T) {
 					Nickname: "new_nickname",
 				},
 			},
-			expErr: errors.Join(errStatusBadRequest, errNicknameExist),
+			expErr: &ServiceError{ClientMessage: errNicknameExist.Error()},
 		},
 		{
 			name:        "update_user_return_error",
@@ -518,32 +463,32 @@ func TestUpdateNickname(t *testing.T) {
 			},
 			selectNickname: &selectNicknameType{nil, nil},
 			updateError:    errors.New("database error"),
-			expErr:         errors.Join(errStatusInternal, errInternal),
+			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
 		},
 	}
 
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
 			mockRepo.EXPECT().
-				SelectUserById(tCase.id).
+				SelectUserById(ctx, tCase.id).
 				Return(tCase.selectId.user, tCase.selectId.err).
 				Times(1)
 
 			if tCase.selectNickname != nil {
 				mockRepo.EXPECT().
-					SelectUserByNickname(tCase.newNickname).
+					SelectUserByNickname(ctx, tCase.newNickname).
 					Return(tCase.selectNickname.user, tCase.selectNickname.err).
 					Times(1)
 			}
 
 			if tCase.updateError != nil {
 				mockRepo.EXPECT().
-					UpdateUser(tCase.selectId.user).
+					UpdateUser(ctx, tCase.selectId.user).
 					Return(tCase.updateError).
 					Times(1)
 			}
 
-			_, err := service.UpdateNickname(tCase.id, tCase.newNickname)
+			_, err := service.UpdateNickname(ctx, tCase.id, tCase.newNickname)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})
@@ -558,6 +503,7 @@ func TestUpdateEmail(t *testing.T) {
 	mockRepo := repo.NewMockUserRepository(ctrl)
 	log := getStubLogger()
 	service := NewService(mockRepo, log)
+	ctx := context.Background()
 
 	type selectIdType struct {
 		user *models.User
@@ -582,13 +528,13 @@ func TestUpdateEmail(t *testing.T) {
 			name:     "select_by_id_return_error",
 			id:       "id",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   errors.Join(errStatusInternal, errInternal),
+			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:     "user_not_found",
 			id:       "id",
 			selectId: &selectIdType{nil, nil},
-			expErr:   errors.Join(errStatusBadRequest, errUserNotFound),
+			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
 		},
 		{
 			name:     "select_by_email_return_error",
@@ -601,7 +547,7 @@ func TestUpdateEmail(t *testing.T) {
 				},
 			},
 			selectEmail: &selectEmailType{nil, errors.New("database error")},
-			expErr:      errors.Join(errStatusInternal, errInternal),
+			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
 		},
 		{
 			name:     "email_collision",
@@ -619,7 +565,7 @@ func TestUpdateEmail(t *testing.T) {
 					Email: "new_email",
 				},
 			},
-			expErr: errors.Join(errStatusBadRequest, errEmailExist),
+			expErr: &ServiceError{ClientMessage: errEmailExist.Error()},
 		},
 		{
 			name:     "update_user_return_error",
@@ -633,32 +579,32 @@ func TestUpdateEmail(t *testing.T) {
 			},
 			selectEmail: &selectEmailType{nil, nil},
 			updateError: errors.New("database error"),
-			expErr:      errors.Join(errStatusInternal, errInternal),
+			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
 		},
 	}
 
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
 			mockRepo.EXPECT().
-				SelectUserById(tCase.id).
+				SelectUserById(ctx, tCase.id).
 				Return(tCase.selectId.user, tCase.selectId.err).
 				Times(1)
 
 			if tCase.selectEmail != nil {
 				mockRepo.EXPECT().
-					SelectUserByEmail(tCase.newEmail).
+					SelectUserByEmail(ctx, tCase.newEmail).
 					Return(tCase.selectEmail.user, tCase.selectEmail.err).
 					Times(1)
 			}
 
 			if tCase.updateError != nil {
 				mockRepo.EXPECT().
-					UpdateUser(tCase.selectId.user).
+					UpdateUser(ctx, tCase.selectId.user).
 					Return(tCase.updateError).
 					Times(1)
 			}
 
-			_, err := service.UpdateEmail(tCase.id, tCase.newEmail)
+			_, err := service.UpdateEmail(ctx, tCase.id, tCase.newEmail)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})

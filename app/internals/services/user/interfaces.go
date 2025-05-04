@@ -1,14 +1,17 @@
 package user
 
-import "login/internals/models"
+import (
+	"context"
+	"login/internals/models"
+)
 
 //go:generate mockgen -source=interfaces.go -destination=mock/user_repository.go
 type UserRepository interface {
-	CreateUser(email, nickname, password string) (string, error)
-	SelectUserById(id string) (*models.User, error)
-	SelectAllUsers(limit, offset uint64) ([]models.User, error)
-	SelectUserByEmail(email string) (*models.User, error)
-	SelectUserByNickname(nickname string) (*models.User, error)
-	UpdateUser(user *models.User) error
-	DeleteUser(id string) error
+	CreateUser(ctx context.Context, email, nickname, password string) (string, error)
+	SelectUserById(ctx context.Context, id string) (*models.User, error)
+	SelectAllUsers(ctx context.Context, limit, offset uint64) ([]models.User, error)
+	SelectUserByEmail(ctx context.Context, email string) (*models.User, error)
+	SelectUserByNickname(ctx context.Context, nickname string) (*models.User, error)
+	UpdateUser(ctx context.Context, user *models.User) error
+	DeleteUser(ctx context.Context, id string) error
 }

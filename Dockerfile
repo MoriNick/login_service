@@ -6,7 +6,7 @@ COPY ./app/go.* ./
 RUN go mod download
 
 COPY ./app/ ./
-RUN GOOS=linux GOARCH=amd64 go build -v -o login_service ./cmd
+RUN GOOS=linux GOARCH=amd64 go build -o login_service ./cmd
 
 FROM scratch
 COPY --from=build /app/login_service /bin/login_service

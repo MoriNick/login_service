@@ -7,6 +7,9 @@ import (
 )
 
 func TestValidateUserId(t *testing.T) {
+	//declared in handlers_test.go
+	onceInitValidator.Do(onceInitValidatorFunc)
+
 	cases := []struct {
 		name   string
 		id     string
@@ -48,17 +51,15 @@ func TestValidateUserId(t *testing.T) {
 }
 
 func TestValidateEmail(t *testing.T) {
+	//declared in handlers_test.go
+	onceInitValidator.Do(onceInitValidatorFunc)
+
 	cases := []struct {
 		name   string
 		email  string
 		expErr error
 	}{
 		{name: "empty_email", email: "", expErr: errInvalidEmail},
-		{
-			name:   "long_email",
-			email:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@mail.ru",
-			expErr: errInvalidEmail,
-		},
 		{name: "email_aaa", email: "aaa", expErr: errInvalidEmail},
 		{name: "email_aaa@", email: "aaa@", expErr: errInvalidEmail},
 		{name: "email_aaa@.", email: "aaa@.", expErr: errInvalidEmail},
@@ -79,6 +80,9 @@ func TestValidateEmail(t *testing.T) {
 }
 
 func TestValidateNickname(t *testing.T) {
+	//declared in handlers_test.go
+	onceInitValidator.Do(onceInitValidatorFunc)
+
 	cases := []struct {
 		name     string
 		nickname string
@@ -101,6 +105,9 @@ func TestValidateNickname(t *testing.T) {
 }
 
 func TestValidatePassword(t *testing.T) {
+	//declared in handlers_test.go
+	onceInitValidator.Do(onceInitValidatorFunc)
+
 	cases := []struct {
 		name     string
 		password string

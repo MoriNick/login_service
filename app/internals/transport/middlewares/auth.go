@@ -8,6 +8,8 @@ import (
 	"net/http"
 
 	"login/pkg/tokens"
+
+	"github.com/go-chi/chi/middleware"
 )
 
 func AuthMiddleware(l *slog.Logger) func(http.Handler) http.Handler {
@@ -18,8 +20,6 @@ func AuthMiddleware(l *slog.Logger) func(http.Handler) http.Handler {
 
 func auth(log *slog.Logger, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Info("Auth user")
-
 		access, err := r.Cookie("access_token")
 		if err != nil {
 			errorHandler(w, http.StatusUnauthorized, "Unauthorized")
@@ -41,18 +41,15 @@ func auth(log *slog.Logger, next http.Handler) http.HandlerFunc {
 				http.SetCookie(w, &http.Cookie{Name: "access_token", Value: tks.GetAccess(), HttpOnly: true})
 				http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: tks.GetRefresh(), HttpOnly: true})
 			} else {
-				log.Error("Auth error", "error", err.Error())
+				log.Error("Auth: "+err.Error(), "request_id", middleware.GetReqID(r.Context()))
 				errorHandler(w, http.StatusInternalServerError, "Internal error")
 				return
 			}
 		}
 
-		log.Info("Successful auth", "user_id", tks.GetId())
+		nCtx := context.WithValue(r.Context(), "user_id", tks.GetId())
 
-		rctx := r.Context()
-		nctx := context.WithValue(rctx, "user_id", tks.GetId())
-
-		next.ServeHTTP(w, r.WithContext(nctx))
+		next.ServeHTTP(w, r.WithContext(nCtx))
 	}
 }
 
