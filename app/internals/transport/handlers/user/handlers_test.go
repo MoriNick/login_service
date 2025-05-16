@@ -9,10 +9,9 @@ import (
 	"login/internals/models"
 	us "login/internals/services/user"
 	mock "login/internals/transport/handlers/user/mock"
-	"login/pkg/tokens"
+	"login/pkg/session"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -35,13 +34,22 @@ func (dh discardHandler) Handle(context.Context, slog.Record) error { return nil
 func (dh discardHandler) WithAttrs(attrs []slog.Attr) slog.Handler  { return dh }
 func (dh discardHandler) WithGroup(name string) slog.Handler        { return dh }
 
-func getStubLogger() *slog.Logger {
-	return slog.New(discardHandler{})
-}
+func prepareTestRouter(us *mock.MockUserService, sm *mock.MockSessionManager) chi.Router {
+	log := slog.New(discardHandler{})
+	slog.SetDefault(log)
+	router := chi.NewRouter()
 
-func generateTestTokens(id string) [2]string {
-	tks, _ := tokens.GenerateTokens(id)
-	return [2]string{tks.GetAccess(), tks.GetRefresh()}
+	sm.EXPECT().
+		AuthMiddleware(log).
+		Return(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, r)
+			})
+		})
+
+	GetHandler(us, sm, log).Register(router)
+
+	return router
 }
 
 func prepareTestRequestBody(st interface{}) io.Reader {
@@ -61,17 +69,18 @@ func TestRegistration(t *testing.T) {
 
 	onceInitValidator.Do(onceInitValidatorFunc)
 	serviceMock := mock.NewMockUserService(ctrl)
-	log := getStubLogger()
-	slog.SetDefault(log)
-	router := chi.NewRouter()
-	GetHandler(serviceMock, log).Register(log, router)
+	sessionManagerMock := mock.NewMockSessionManager(ctrl)
+	router := prepareTestRouter(serviceMock, sessionManagerMock)
 
 	var strType string
 
 	type serviceReturnType struct {
-		id      string
-		access  string
-		refresh string
+		userId string
+		err    error
+	}
+
+	type createSessionType struct {
+		session *session.Session
 		err     error
 	}
 
@@ -79,6 +88,7 @@ func TestRegistration(t *testing.T) {
 		name          string
 		body          io.Reader
 		serviceReturn *serviceReturnType
+		createSession *createSessionType
 		expStatus     int
 		expBody       string
 	}{
@@ -104,11 +114,25 @@ func TestRegistration(t *testing.T) {
 				},
 			),
 			serviceReturn: &serviceReturnType{
-				"", "", "",
+				"",
 				&us.ServiceError{ClientMessage: "email already exist"},
 			},
 			expStatus: http.StatusBadRequest,
 			expBody:   prepareExpResponseBody(&responseError{"email already exist"}),
+		},
+		{
+			name: "create_session_return_with_error",
+			body: prepareTestRequestBody(
+				&registrationEntity{
+					Email:    "email@mail.ru",
+					Nickname: "user1",
+					Password: "12345678",
+				},
+			),
+			serviceReturn: &serviceReturnType{"userId", nil},
+			createSession: &createSessionType{nil, errors.New("something wrong")},
+			expStatus:     http.StatusInternalServerError,
+			expBody:       prepareExpResponseBody(&responseError{"Internal error"}),
 		},
 		{
 			name: "without_errors",
@@ -119,42 +143,68 @@ func TestRegistration(t *testing.T) {
 					Password: "12345678",
 				},
 			),
-			serviceReturn: &serviceReturnType{"id", "access", "refresh", nil},
+			serviceReturn: &serviceReturnType{"userId", nil},
+			createSession: &createSessionType{&session.Session{Id: "session_id"}, nil},
 			expStatus:     http.StatusOK,
-			expBody:       prepareExpResponseBody(&responseUserId{"id"}),
+			expBody:       prepareExpResponseBody(&responseUserId{"userId"}),
 		},
 	}
 
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "http://localhost/api/user/registration", tCase.body)
+			w := httptest.NewRecorder()
+
 			if tCase.serviceReturn != nil {
 				serviceMock.EXPECT().
 					Registration(
+						//TODO
 						gomock.Any(),
 						gomock.AssignableToTypeOf(strType),
 						gomock.AssignableToTypeOf(strType),
 						gomock.AssignableToTypeOf(strType),
 					).
 					Return(
-						tCase.serviceReturn.id,
-						tCase.serviceReturn.access,
-						tCase.serviceReturn.refresh,
+						tCase.serviceReturn.userId,
 						tCase.serviceReturn.err,
 					).
 					Times(1)
 			}
 
-			req := httptest.NewRequest("POST", "http://localhost/api/user/registration", tCase.body)
-			w := httptest.NewRecorder()
+			if tCase.createSession != nil {
+				sessionManagerMock.EXPECT().
+					CreateAndSaveSession(
+						//TODO
+						gomock.Any(),
+						tCase.serviceReturn.userId,
+					).
+					Return(
+						tCase.createSession.session,
+						tCase.createSession.err,
+					).
+					Times(1)
+
+				if tCase.createSession.err == nil {
+					sessionManagerMock.EXPECT().
+						SetUpdatedSessionCookie(
+							//TODO
+							gomock.Any(),
+							tCase.createSession.session.Id,
+						).
+						Do(func(w http.ResponseWriter, sessionId string) {
+							http.SetCookie(w, &http.Cookie{Name: "session_id", Value: sessionId})
+						}).
+						Times(1)
+				}
+			}
 
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
 			if w.Code == http.StatusOK {
-				cookies := w.Result().Cookies()
-				require.Equal(t, tCase.serviceReturn.access, cookies[0].Value)
-				require.Equal(t, tCase.serviceReturn.refresh, cookies[1].Value)
+				cookie := w.Result().Cookies()[0]
+				require.NotEmpty(t, cookie)
 			}
 		})
 	}
@@ -167,15 +217,21 @@ func TestLogin(t *testing.T) {
 
 	onceInitValidator.Do(onceInitValidatorFunc)
 	serviceMock := mock.NewMockUserService(ctrl)
-	log := getStubLogger()
-	slog.SetDefault(log)
-	router := chi.NewRouter()
-	GetHandler(serviceMock, log).Register(log, router)
+	sessionManagerMock := mock.NewMockSessionManager(ctrl)
+	router := prepareTestRouter(serviceMock, sessionManagerMock)
 
 	type serviceResultType struct {
-		id      string
-		access  string
-		refresh string
+		userId string
+		err    error
+	}
+
+	type loadSessionType struct {
+		session *session.Session
+		err     error
+	}
+
+	type createSessionType struct {
+		session *session.Session
 		err     error
 	}
 
@@ -183,6 +239,8 @@ func TestLogin(t *testing.T) {
 		name          string
 		body          io.Reader
 		serviceResult *serviceResultType
+		loadSession   *loadSessionType
+		createSession *createSessionType
 		expStatus     int
 		expBody       string
 	}{
@@ -202,16 +260,34 @@ func TestLogin(t *testing.T) {
 			name: "service_return_error",
 			body: prepareTestRequestBody(&loginEntity{Param: "email@mail.ru", Password: "12345678"}),
 			serviceResult: &serviceResultType{
-				"", "", "",
+				"",
 				&us.ServiceError{ClientMessage: "email already exist"},
 			},
 			expStatus: http.StatusBadRequest,
 			expBody:   prepareExpResponseBody(&responseError{"email already exist"}),
 		},
 		{
+			name:          "load_session_return_with_error",
+			body:          prepareTestRequestBody(&loginEntity{Param: "email@mail.ru", Password: "12345678"}),
+			serviceResult: &serviceResultType{"", nil},
+			loadSession:   &loadSessionType{nil, errors.New("something wrong")},
+			expStatus:     http.StatusInternalServerError,
+			expBody:       prepareExpResponseBody(&responseError{"Internal error"}),
+		},
+		{
+			name:          "create_session_return_with_error",
+			body:          prepareTestRequestBody(&loginEntity{Param: "email@mail.ru", Password: "12345678"}),
+			serviceResult: &serviceResultType{"", nil},
+			loadSession:   &loadSessionType{nil, nil},
+			createSession: &createSessionType{nil, errors.New("something wrong")},
+			expStatus:     http.StatusInternalServerError,
+			expBody:       prepareExpResponseBody(&responseError{"Internal error"}),
+		},
+		{
 			name:          "without_errors",
 			body:          prepareTestRequestBody(&loginEntity{Param: "user1", Password: "12345678"}),
-			serviceResult: &serviceResultType{"id", "access", "refresh", nil},
+			serviceResult: &serviceResultType{"id", nil},
+			loadSession:   &loadSessionType{&session.Session{Id: "session_id"}, nil},
 			expStatus:     http.StatusOK,
 			expBody:       prepareExpResponseBody(&responseUserId{"id"}),
 		},
@@ -224,15 +300,55 @@ func TestLogin(t *testing.T) {
 			if tCase.serviceResult != nil {
 				serviceMock.EXPECT().
 					Login(
+						//TODO
 						gomock.Any(),
 						gomock.AssignableToTypeOf(strType),
 						gomock.AssignableToTypeOf(strType),
 					).
 					Return(
-						tCase.serviceResult.id,
-						tCase.serviceResult.access,
-						tCase.serviceResult.refresh,
+						tCase.serviceResult.userId,
 						tCase.serviceResult.err,
+					).
+					Times(1)
+			}
+
+			if tCase.loadSession != nil {
+				sessionManagerMock.EXPECT().
+					LoadSession(
+						//TODO
+						gomock.Any(),
+						tCase.serviceResult.userId,
+					).
+					Return(
+						tCase.loadSession.session,
+						tCase.loadSession.err,
+					).
+					Times(1)
+
+				if tCase.loadSession.err == nil && tCase.loadSession.session != nil {
+					sessionManagerMock.EXPECT().
+						SetUpdatedSessionCookie(
+							//TODO
+							gomock.Any(),
+							tCase.loadSession.session.Id,
+						).
+						Do(func(w http.ResponseWriter, sessionId string) {
+							http.SetCookie(w, &http.Cookie{Name: "session_id", Value: sessionId})
+						}).
+						Times(1)
+				}
+			}
+
+			if tCase.createSession != nil {
+				sessionManagerMock.EXPECT().
+					CreateAndSaveSession(
+						//TODO
+						gomock.Any(),
+						tCase.serviceResult.userId,
+					).
+					Return(
+						tCase.createSession.session,
+						tCase.createSession.err,
 					).
 					Times(1)
 			}
@@ -245,9 +361,8 @@ func TestLogin(t *testing.T) {
 			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
 			if w.Code == http.StatusOK {
-				cookies := w.Result().Cookies()
-				require.Equal(t, tCase.serviceResult.access, cookies[0].Value)
-				require.Equal(t, tCase.serviceResult.refresh, cookies[1].Value)
+				cookie := w.Result().Cookies()[0]
+				require.NotEmpty(t, cookie)
 			}
 		})
 	}
@@ -255,18 +370,13 @@ func TestLogin(t *testing.T) {
 
 // Check all errors in handlers.GetUser()
 func TestGetUser(t *testing.T) {
-	_ = os.Setenv("JWT_SECRET", "secret")
-	defer os.Clearenv()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	onceInitValidator.Do(onceInitValidatorFunc)
-	log := getStubLogger()
-	slog.SetDefault(log)
 	serviceMock := mock.NewMockUserService(ctrl)
-	router := chi.NewRouter()
-	GetHandler(serviceMock, log).Register(log, router)
+	sessionManagerMock := mock.NewMockSessionManager(ctrl)
+	router := prepareTestRouter(serviceMock, sessionManagerMock)
 
 	type serviceResultType struct {
 		user *models.User
@@ -276,7 +386,6 @@ func TestGetUser(t *testing.T) {
 	cases := []struct {
 		name          string
 		userId        string
-		tokens        [2]string
 		serviceResult *serviceResultType
 		expStatus     int
 		expBody       string
@@ -284,14 +393,12 @@ func TestGetUser(t *testing.T) {
 		{
 			name:      "invalid_user_id",
 			userId:    "id",
-			tokens:    generateTestTokens("id"),
 			expStatus: http.StatusBadRequest,
 			expBody:   prepareExpResponseBody(&responseError{errInvalidUserId.Error()}),
 		},
 		{
 			name:   "service_return_error",
 			userId: "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens: generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			serviceResult: &serviceResultType{
 				nil,
 				&us.ServiceError{ClientMessage: "user not found"},
@@ -302,7 +409,6 @@ func TestGetUser(t *testing.T) {
 		{
 			name:   "without_errors",
 			userId: "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens: generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			serviceResult: &serviceResultType{
 				&models.User{
 					Id:       "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
@@ -325,21 +431,22 @@ func TestGetUser(t *testing.T) {
 			if tCase.serviceResult != nil {
 				serviceMock.EXPECT().
 					GetUser(
+						//TODO
 						gomock.Any(),
 						tCase.userId,
 					).
 					Return(tCase.serviceResult.user, tCase.serviceResult.err).
 					Times(1)
+
+				sessionManagerMock.EXPECT().
+					//TODO Any()
+					GetSessionFromContext(gomock.Any()).
+					Return(&session.Session{UserId: tCase.userId}).
+					Times(1)
 			}
 
 			req := httptest.NewRequest("GET", "http://localhost/api/user/"+tCase.userId, nil)
 			req.SetPathValue("id", tCase.userId)
-			req.AddCookie(
-				&http.Cookie{Name: "access_token", Value: tCase.tokens[0], HttpOnly: true},
-			)
-			req.AddCookie(
-				&http.Cookie{Name: "refresh_token", Value: tCase.tokens[1], HttpOnly: true},
-			)
 			w := httptest.NewRecorder()
 
 			router.ServeHTTP(w, req)
@@ -352,18 +459,13 @@ func TestGetUser(t *testing.T) {
 
 // Check all errors in handlers.GetAllUsers()
 func TestGetAllUsers(t *testing.T) {
-	_ = os.Setenv("JWT_SECRET", "secret")
-	defer os.Clearenv()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	onceInitValidator.Do(onceInitValidatorFunc)
-	log := getStubLogger()
-	slog.SetDefault(log)
 	serviceMock := mock.NewMockUserService(ctrl)
-	router := chi.NewRouter()
-	GetHandler(serviceMock, log).Register(log, router)
+	sessionManagerMock := mock.NewMockSessionManager(ctrl)
+	router := prepareTestRouter(serviceMock, sessionManagerMock)
 
 	var uintType uint64
 
@@ -429,6 +531,7 @@ func TestGetAllUsers(t *testing.T) {
 			if tCase.serviceResult != nil {
 				serviceMock.EXPECT().
 					GetAllUsers(
+						//TODO
 						gomock.Any(),
 						gomock.AssignableToTypeOf(uintType),
 						gomock.AssignableToTypeOf(uintType),
@@ -436,14 +539,11 @@ func TestGetAllUsers(t *testing.T) {
 					Return(tCase.serviceResult.users, tCase.serviceResult.err).
 					Times(1)
 			}
-			tokens := generateTestTokens("id")
 			req := httptest.NewRequest(
 				"GET",
 				"http://localhost/api/user/all?limit="+tCase.limit+"&offset="+tCase.offset,
 				nil,
 			)
-			req.AddCookie(&http.Cookie{Name: "access_token", Value: tokens[0], HttpOnly: true})
-			req.AddCookie(&http.Cookie{Name: "refresh_token", Value: tokens[1], HttpOnly: true})
 			w := httptest.NewRecorder()
 
 			router.ServeHTTP(w, req)
@@ -456,18 +556,13 @@ func TestGetAllUsers(t *testing.T) {
 
 // Check all errors in handlers.UpdateUser()
 func TestUpdateUser(t *testing.T) {
-	_ = os.Setenv("JWT_SECRET", "secret")
-	defer os.Clearenv()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	onceInitValidator.Do(onceInitValidatorFunc)
-	log := getStubLogger()
-	slog.SetDefault(log)
 	serviceMock := mock.NewMockUserService(ctrl)
-	router := chi.NewRouter()
-	GetHandler(serviceMock, log).Register(log, router)
+	sessionManagerMock := mock.NewMockSessionManager(ctrl)
+	router := prepareTestRouter(serviceMock, sessionManagerMock)
 
 	var stringType string
 
@@ -479,7 +574,6 @@ func TestUpdateUser(t *testing.T) {
 	cases := []struct {
 		name          string
 		id            string
-		tokens        [2]string
 		updateType    string
 		reqBody       io.Reader
 		serviceResult *serviceResultType
@@ -489,23 +583,13 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "invalid_id",
 			id:         "idd",
-			tokens:     generateTestTokens("idd"),
 			updateType: "invalid",
 			expCode:    http.StatusBadRequest,
 			expBody:    prepareExpResponseBody(&responseError{errInvalidUserId.Error()}),
 		},
 		{
-			name:       "different_id's",
-			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("idd"),
-			updateType: "invalid",
-			expCode:    http.StatusForbidden,
-			expBody:    prepareExpResponseBody(&responseError{"Access denied"}),
-		},
-		{
 			name:       "incorrect_type",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "invalid",
 			expCode:    http.StatusNotFound,
 			expBody:    prepareExpResponseBody(&responseError{"Page not found"}),
@@ -513,7 +597,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "incorrect_body_in_update_password",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "password",
 			reqBody:    strings.NewReader(""),
 			expCode:    http.StatusInternalServerError,
@@ -522,7 +605,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "invalid_new_password_in_update_password",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "password",
 			reqBody:    prepareTestRequestBody(&updatePassword{NewPassword: "ss"}),
 			expCode:    http.StatusBadRequest,
@@ -531,7 +613,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "serivce_return_error_in_update_password",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "password",
 			reqBody:    prepareTestRequestBody(&updatePassword{NewPassword: "len_password_>_8"}),
 			serviceResult: &serviceResultType{
@@ -544,7 +625,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "incorrect_body_in_update_nickname",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "nickname",
 			reqBody:    strings.NewReader(""),
 			expCode:    http.StatusInternalServerError,
@@ -553,7 +633,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "invalid_nickname_in_update_nickname",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "nickname",
 			reqBody:    prepareTestRequestBody(&updateNickname{"00"}),
 			expCode:    http.StatusBadRequest,
@@ -562,7 +641,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "service_return_error_in_update_nickname",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "nickname",
 			reqBody:    prepareTestRequestBody(&updateNickname{"Nicky"}),
 			serviceResult: &serviceResultType{
@@ -575,7 +653,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "incorrect_body_in_update_email",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "email",
 			reqBody:    strings.NewReader(""),
 			expCode:    http.StatusInternalServerError,
@@ -584,7 +661,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "invalid_email_in_update_email",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "email",
 			reqBody:    prepareTestRequestBody(&updateEmail{"email"}),
 			expCode:    http.StatusBadRequest,
@@ -593,7 +669,6 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:       "service_return_error_in_update_email",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:     generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
 			updateType: "email",
 			reqBody:    prepareTestRequestBody(&updateEmail{"email@mail.ru"}),
 			serviceResult: &serviceResultType{
@@ -648,6 +723,13 @@ func TestUpdateUser(t *testing.T) {
 				}
 			}
 
+			if tCase.name != "invalid_id" {
+				sessionManagerMock.EXPECT().
+					GetSessionFromContext(gomock.Any()).
+					Return(&session.Session{UserId: tCase.id}).
+					Times(1)
+			}
+
 			req := httptest.NewRequest(
 				"PUT",
 				"http://localhost/api/user/"+tCase.id+"/update/"+tCase.updateType,
@@ -655,12 +737,6 @@ func TestUpdateUser(t *testing.T) {
 			)
 			req.SetPathValue("id", tCase.id)
 			req.SetPathValue("type", tCase.updateType)
-			req.AddCookie(
-				&http.Cookie{Name: "access_token", Value: tCase.tokens[0], HttpOnly: true},
-			)
-			req.AddCookie(
-				&http.Cookie{Name: "refresh_token", Value: tCase.tokens[1], HttpOnly: true},
-			)
 			w := httptest.NewRecorder()
 
 			router.ServeHTTP(w, req)
@@ -673,48 +749,61 @@ func TestUpdateUser(t *testing.T) {
 
 // Check all errors in handlers.DeleteUser()
 func TestDeleteUser(t *testing.T) {
-	_ = os.Setenv("JWT_SECRET", "secret")
-	defer os.Clearenv()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	onceInitValidator.Do(onceInitValidatorFunc)
-	log := getStubLogger()
-	slog.SetDefault(log)
 	serviceMock := mock.NewMockUserService(ctrl)
-	router := chi.NewRouter()
-	GetHandler(serviceMock, log).Register(log, router)
+	sessionManagerMock := mock.NewMockSessionManager(ctrl)
+	router := prepareTestRouter(serviceMock, sessionManagerMock)
+
+	sessionCookie := http.Cookie{Name: "session_id", Value: "sss"}
+
+	type destroySessionType struct {
+		err error
+	}
+
+	type serviceResultType struct {
+		err error
+	}
 
 	cases := []struct {
-		name          string
-		id            string
-		tokens        [2]string
-		serviceResult error
-		expCode       int
-		expBody       string
+		name           string
+		id             string
+		setCookie      bool
+		serviceResult  *serviceResultType
+		destroySession *destroySessionType
+		expCode        int
+		expBody        string
 	}{
 		{
-			name:    "incorrect_id",
+			name:    "invalid_id",
 			id:      "id",
-			tokens:  generateTestTokens("id"),
 			expCode: http.StatusBadRequest,
 			expBody: prepareExpResponseBody(&responseError{errInvalidUserId.Error()}),
 		},
 		{
-			name:    "different_id's",
+			name:    "empty_session_cookie",
 			id:      "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:  generateTestTokens("ssss"),
-			expCode: http.StatusForbidden,
-			expBody: prepareExpResponseBody(&responseError{"Access denied"}),
+			expCode: http.StatusInternalServerError,
+			expBody: prepareExpResponseBody(&responseError{"Internal error"}),
 		},
 		{
 			name:          "service_return_error",
 			id:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			tokens:        generateTestTokens("4fd047eb-1925-4d27-95f3-4bcda6ae201b"),
-			serviceResult: &us.ServiceError{ClientMessage: "user not found"},
+			setCookie:     true,
+			serviceResult: &serviceResultType{&us.ServiceError{ClientMessage: "user not found"}},
 			expCode:       http.StatusBadRequest,
 			expBody:       prepareExpResponseBody(&responseError{"user not found"}),
+		},
+		{
+			name:           "destroy_session_return_with_error",
+			id:             "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
+			setCookie:      true,
+			serviceResult:  &serviceResultType{nil},
+			destroySession: &destroySessionType{err: errors.New("something wrong")},
+			expCode:        http.StatusInternalServerError,
+			expBody:        prepareExpResponseBody(&responseError{"Internal error"}),
 		},
 	}
 
@@ -726,8 +815,38 @@ func TestDeleteUser(t *testing.T) {
 						gomock.Any(),
 						tCase.id,
 					).
-					Return(tCase.serviceResult).
+					Return(tCase.serviceResult.err).
 					Times(1)
+			}
+
+			if tCase.destroySession != nil {
+				sessionManagerMock.EXPECT().
+					DestroySession(
+						gomock.Any(),
+						sessionCookie.Value,
+					).
+					Return(
+						tCase.destroySession.err,
+					).
+					Times(1)
+			}
+
+			if tCase.name != "invalid_id" {
+				sessionManagerMock.EXPECT().
+					GetSessionFromContext(gomock.Any()).
+					Return(&session.Session{UserId: tCase.id}).
+					Times(1)
+
+				if tCase.setCookie {
+					sessionManagerMock.EXPECT().
+						GetSessionCookie(gomock.Any()).
+						Return(&http.Cookie{Name: "session_id", Value: "sss"}).
+						Times(1)
+				} else {
+					sessionManagerMock.EXPECT().
+						GetSessionCookie(gomock.Any()).
+						Return(nil)
+				}
 			}
 
 			req := httptest.NewRequest(
@@ -736,15 +855,95 @@ func TestDeleteUser(t *testing.T) {
 				nil,
 			)
 			req.SetPathValue("id", tCase.id)
-			req.AddCookie(
-				&http.Cookie{Name: "access_token", Value: tCase.tokens[0], HttpOnly: true},
-			)
-			req.AddCookie(
-				&http.Cookie{Name: "refresh_token", Value: tCase.tokens[1], HttpOnly: true},
-			)
 			w := httptest.NewRecorder()
 
 			router.ServeHTTP(w, req)
+
+			require.Equal(t, tCase.expCode, w.Code)
+			require.Equal(t, tCase.expBody, w.Body.String())
+		})
+	}
+}
+
+func TestReadAndValidateUserId(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	type bodyType struct {
+		UserId string `json:"userId"`
+		Err    error  `json:"err"`
+	}
+
+	onceInitValidator.Do(onceInitValidatorFunc)
+	sessionManagerMock := mock.NewMockSessionManager(ctrl)
+	handler := &userHandler{sm: sessionManagerMock}
+	router := chi.NewRouter()
+	router.Get("/api/user/{id}", func(w http.ResponseWriter, r *http.Request) {
+		userId, status, err := handler.readAndValidateUserId(r)
+
+		if status == 0 {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(status)
+		}
+		_ = json.NewEncoder(w).Encode(&bodyType{UserId: userId, Err: err})
+	})
+
+	type getSessionContextType struct {
+		session *session.Session
+	}
+
+	cases := []struct {
+		name              string
+		userId            string
+		getSessionContext *getSessionContextType
+		expCode           int
+		expBody           string
+	}{
+		{
+			name:    "invalid_user_id",
+			userId:  "invalidUserID",
+			expCode: http.StatusBadRequest,
+			expBody: prepareExpResponseBody(&bodyType{Err: errInvalidUserId}),
+		},
+		{
+			name:              "empty_session",
+			userId:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
+			getSessionContext: &getSessionContextType{session: nil},
+			expCode:           http.StatusInternalServerError,
+			expBody:           prepareExpResponseBody(&bodyType{Err: errors.New("empty session")}),
+		},
+		{
+			name:              "access_denied",
+			userId:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
+			getSessionContext: &getSessionContextType{session: &session.Session{UserId: "4fd047eb-1925-4d27-95f3-4bcda6ae201a"}},
+			expCode:           http.StatusForbidden,
+			expBody:           prepareExpResponseBody(&bodyType{Err: errors.New("access denied")}),
+		},
+		{
+			name:              "without_errors",
+			userId:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
+			getSessionContext: &getSessionContextType{session: &session.Session{UserId: "4fd047eb-1925-4d27-95f3-4bcda6ae201b"}},
+			expCode:           http.StatusOK,
+			expBody:           prepareExpResponseBody(&bodyType{UserId: "4fd047eb-1925-4d27-95f3-4bcda6ae201b"}),
+		},
+	}
+
+	for _, tCase := range cases {
+		t.Run(tCase.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "http://localhost/api/user/"+tCase.userId, nil)
+			r.SetPathValue("id", tCase.userId)
+
+			if tCase.getSessionContext != nil {
+				sessionManagerMock.EXPECT().
+					GetSessionFromContext(gomock.AssignableToTypeOf(r)).
+					Return(tCase.getSessionContext.session).
+					Times(1)
+			}
+
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, r)
 
 			require.Equal(t, tCase.expCode, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())

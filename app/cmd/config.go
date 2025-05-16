@@ -9,7 +9,7 @@ import (
 const defaultPort = "5000"
 const defaultLogLevel = slog.LevelInfo
 
-type Config struct {
+type config struct {
 	Host     string
 	Port     string
 	LogLevel slog.Level
@@ -23,8 +23,8 @@ var logLevelMap = map[string]slog.Level{
 	"ERROR": slog.LevelError,
 }
 
-func newConfig() (*Config, error) {
-	cfg := &Config{}
+func newConfig() (*config, error) {
+	cfg := &config{}
 
 	cfg.Host = os.Getenv("HOST")
 
@@ -46,6 +46,6 @@ func newConfig() (*Config, error) {
 	return cfg, nil
 }
 
-func (c Config) GetDBConfig() *db.DBConfig {
+func (c config) GetDBConfig() *db.DBConfig {
 	return c.dbConfig
 }

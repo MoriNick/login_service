@@ -7,6 +7,13 @@ CREATE TABLE users (
   password TEXT NOT NULL
 );
 
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES users (id) ON DELETE CASCADE,
+    updated_at timestamp,
+    last_activity_at timestamp
+);
+
 INSERT INTO
   users (id, email, nickname, password)
 VALUES

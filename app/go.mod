@@ -5,7 +5,6 @@ go 1.23.5
 require (
 	github.com/go-chi/chi v1.5.5
 	github.com/go-playground/validator/v10 v10.26.0
-	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/stretchr/testify v1.9.0
 	go.uber.org/mock v0.5.0

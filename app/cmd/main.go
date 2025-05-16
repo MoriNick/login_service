@@ -15,6 +15,7 @@ import (
 	repo "login/internals/database/repositories"
 	us "login/internals/services/user"
 	uh "login/internals/transport/handlers/user"
+	"login/pkg/session"
 
 	"github.com/go-chi/chi"
 	"golang.org/x/sync/errgroup"
@@ -42,6 +43,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	sessionManager := session.NewSessionManager(
+		mainCtx,
+		storage,
+		time.Duration(10*time.Second), //gcInterval
+		time.Duration(10*time.Minute), //idleExpiration
+		time.Duration(30*time.Minute), //absoluteExpiration
+		"session_id",                  //cookieName
+	)
+
 	if err := uh.InitValidator(); err != nil {
 		l.Error("Init validator error", "error", err.Error())
 		os.Exit(1)
@@ -49,8 +59,8 @@ func main() {
 
 	userRepo := repo.NewUserRepository(storage)
 	userService := us.NewService(userRepo, l)
-	userHandler := uh.GetHandler(userService, l)
-	userHandler.Register(l, router)
+	userHandler := uh.GetHandler(userService, sessionManager, l)
+	userHandler.Register(router)
 
 	srv := &http.Server{
 		Addr:    net.JoinHostPort(cfg.Host, cfg.Port),

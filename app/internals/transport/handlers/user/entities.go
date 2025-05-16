@@ -1,6 +1,8 @@
 package user
 
-import "log/slog"
+import (
+	"log/slog"
+)
 
 // ------------------
 // |Request entities|
@@ -40,7 +42,7 @@ type updateNickname struct {
 // -------------------
 
 type responseUserId struct {
-	Id string `json:"id"`
+	UserId string `json:"user_id"`
 }
 
 type responseError struct {

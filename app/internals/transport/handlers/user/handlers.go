@@ -3,13 +3,12 @@ package user
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
-
-	"login/internals/transport/middlewares"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
@@ -17,18 +16,19 @@ import (
 
 type userHandler struct {
 	log *slog.Logger
+	sm  SessionManager
 	us  UserService
 }
 
 type Handler interface {
-	Register(*slog.Logger, chi.Router)
+	Register(chi.Router)
 }
 
-func GetHandler(service UserService, log *slog.Logger) Handler {
-	return &userHandler{us: service, log: log}
+func GetHandler(us UserService, sm SessionManager, log *slog.Logger) Handler {
+	return &userHandler{us: us, sm: sm, log: log}
 }
 
-func (uh *userHandler) Register(l *slog.Logger, router chi.Router) {
+func (uh *userHandler) Register(router chi.Router) {
 	router.Use(middleware.RequestID)
 	router.Use(
 		middleware.RequestLogger(
@@ -41,9 +41,9 @@ func (uh *userHandler) Register(l *slog.Logger, router chi.Router) {
 	router.Route("/api/user", func(r chi.Router) {
 		r.Post("/registration", uh.Registration)
 		r.Post("/login", uh.Login)
-		r.Delete("/{id}/logout", uh.Logout)
 
-		auth := middlewares.AuthMiddleware(l)
+		auth := uh.sm.AuthMiddleware(uh.log)
+		r.With(auth).Delete("/{id}/logout", uh.Logout)
 		r.With(auth).Get("/{id}", uh.GetUser)
 		r.With(auth).Get("/all", uh.GetAllUsers)
 		r.With(auth).Put("/{id}/update/{type}", uh.UpdateUser)
@@ -69,16 +69,27 @@ func (uh *userHandler) Registration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, access, refresh, err := uh.us.Registration(r.Context(), candidate.Email, candidate.Nickname, candidate.Password)
+	userId, err := uh.us.Registration(r.Context(), candidate.Email, candidate.Nickname, candidate.Password)
 	if err != nil {
 		uh.serviceErrorHandler(r.Context(), w, err)
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{Name: "access_token", Value: access, HttpOnly: true})
-	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: refresh, HttpOnly: true})
+	session, err := uh.sm.CreateAndSaveSession(r.Context(), userId)
+	if err != nil {
+		logError := &logErrorType{
+			log:     uh.log,
+			reqId:   middleware.GetReqID(r.Context()),
+			name:    "CreateAndSaveSession",
+			message: err.Error(),
+		}
+		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		return
+	}
 
-	renderJson(w, responseUserId{Id: id}, http.StatusOK)
+	uh.sm.SetUpdatedSessionCookie(w, session.Id)
+
+	renderJson(w, responseUserId{UserId: userId}, http.StatusOK)
 }
 
 func (uh *userHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -99,41 +110,101 @@ func (uh *userHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, access, refresh, err := uh.us.Login(r.Context(), candidate.Param, candidate.Password)
+	userId, err := uh.us.Login(r.Context(), candidate.Param, candidate.Password)
 	if err != nil {
 		uh.serviceErrorHandler(r.Context(), w, err)
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{Name: "access_token", Value: access, HttpOnly: true})
-	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: refresh, HttpOnly: true})
-
-	renderJson(w, responseUserId{Id: id}, http.StatusOK)
-}
-
-func (uh *userHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-
-	if err := validateUserId(id); err != nil {
-		errorHandler(w, nil, http.StatusBadRequest, err.Error())
+	session, err := uh.sm.LoadSession(r.Context(), userId)
+	if err != nil {
+		logError := &logErrorType{
+			log:     uh.log,
+			reqId:   middleware.GetReqID(r.Context()),
+			name:    "LoadSession",
+			message: err.Error(),
+		}
+		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{Name: "access_token", MaxAge: -1, HttpOnly: true})
-	http.SetCookie(w, &http.Cookie{Name: "refresh_token", MaxAge: -1, HttpOnly: true})
+	if session == nil {
+		session, err = uh.sm.CreateAndSaveSession(r.Context(), userId)
+		if err != nil {
+			logError := &logErrorType{
+				log:     uh.log,
+				reqId:   middleware.GetReqID(r.Context()),
+				name:    "CreateAndSaveSession",
+				message: err.Error(),
+			}
+			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			return
+		}
+	}
+
+	uh.sm.SetUpdatedSessionCookie(w, session.Id)
+
+	renderJson(w, responseUserId{UserId: userId}, http.StatusOK)
+}
+
+func (uh *userHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	_, status, err := uh.readAndValidateUserId(r)
+	if err != nil {
+		if status == http.StatusInternalServerError {
+			logError := &logErrorType{
+				log:     uh.log,
+				reqId:   middleware.GetReqID(r.Context()),
+				name:    "Logout",
+				message: err.Error(),
+			}
+			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			return
+		}
+		errorHandler(w, nil, status, err.Error())
+		return
+	}
+
+	sessionCookie := uh.sm.GetSessionCookie(r)
+	if sessionCookie == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	err = uh.sm.DestroySession(r.Context(), sessionCookie.Value)
+	if err != nil {
+		logError := &logErrorType{
+			log:     uh.log,
+			reqId:   middleware.GetReqID(r.Context()),
+			name:    "DestroySession",
+			message: err.Error(),
+		}
+		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		return
+	}
+
+	uh.sm.SetDeadSessionCookie(w)
 
 	w.WriteHeader(http.StatusOK)
 }
 
 func (uh *userHandler) GetUser(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-
-	if err := validateUserId(id); err != nil {
-		errorHandler(w, nil, http.StatusBadRequest, err.Error())
+	userId, status, err := uh.readAndValidateUserId(r)
+	if err != nil {
+		if status == http.StatusInternalServerError {
+			logError := &logErrorType{
+				log:     uh.log,
+				reqId:   middleware.GetReqID(r.Context()),
+				name:    "GetUser",
+				message: err.Error(),
+			}
+			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			return
+		}
+		errorHandler(w, nil, status, err.Error())
 		return
 	}
 
-	user, err := uh.us.GetUser(r.Context(), id)
+	user, err := uh.us.GetUser(r.Context(), userId)
 	if err != nil {
 		uh.serviceErrorHandler(r.Context(), w, err)
 		return
@@ -179,18 +250,20 @@ func (uh *userHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 
 func (uh *userHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	t := chi.URLParam(r, "type")
-	userId := chi.URLParam(r, "id")
-
-	if err := validateUserId(userId); err != nil {
-		errorHandler(w, nil, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if targetId := r.Context().Value("user_id"); targetId != nil {
-		if targetId != userId {
-			errorHandler(w, nil, http.StatusForbidden, "Access denied")
+	userId, status, err := uh.readAndValidateUserId(r)
+	if err != nil {
+		if status == http.StatusInternalServerError {
+			logError := &logErrorType{
+				log:     uh.log,
+				reqId:   middleware.GetReqID(r.Context()),
+				name:    "UpdateUser",
+				message: err.Error(),
+			}
+			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
 			return
 		}
+		errorHandler(w, nil, status, err.Error())
+		return
 	}
 
 	var response *responseUser
@@ -282,27 +355,55 @@ func (uh *userHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (uh *userHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-
-	if err := validateUserId(id); err != nil {
-		errorHandler(w, nil, http.StatusBadRequest, err.Error())
+	userId, status, err := uh.readAndValidateUserId(r)
+	if err != nil {
+		if status == http.StatusInternalServerError {
+			logError := &logErrorType{
+				log:     uh.log,
+				reqId:   middleware.GetReqID(r.Context()),
+				name:    "DeleteUser",
+				message: err.Error(),
+			}
+			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			return
+		}
+		errorHandler(w, nil, status, err.Error())
 		return
 	}
 
-	if targetId := r.Context().Value("user_id"); targetId != nil {
-		if targetId != id {
-			errorHandler(w, nil, http.StatusForbidden, "Access denied")
-			return
+	sessionCookie := uh.sm.GetSessionCookie(r)
+	if sessionCookie == nil {
+		logError := &logErrorType{
+			log:     uh.log,
+			reqId:   middleware.GetReqID(r.Context()),
+			name:    "DeleteUser",
+			message: "lost session cookie",
 		}
+		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		return
 	}
 
-	err := uh.us.DeleteUserService(r.Context(), id)
+	err = uh.us.DeleteUserService(r.Context(), userId)
 	if err != nil {
 		uh.serviceErrorHandler(r.Context(), w, err)
 		return
 	}
 
-	renderJson(w, responseUserId{Id: id}, http.StatusOK)
+	err = uh.sm.DestroySession(r.Context(), sessionCookie.Value)
+	if err != nil {
+		logError := &logErrorType{
+			log:     uh.log,
+			reqId:   middleware.GetReqID(r.Context()),
+			name:    "DestroySession",
+			message: err.Error(),
+		}
+		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		return
+	}
+
+	uh.sm.SetDeadSessionCookie(w)
+
+	renderJson(w, responseUserId{UserId: userId}, http.StatusOK)
 }
 
 func (uh *userHandler) serviceErrorHandler(ctx context.Context, w http.ResponseWriter, err error) {
@@ -317,6 +418,25 @@ func (uh *userHandler) serviceErrorHandler(ctx context.Context, w http.ResponseW
 	}
 
 	errorHandler(w, logError, code, clientMessage)
+}
+
+func (uh *userHandler) readAndValidateUserId(r *http.Request) (string, int, error) {
+	userId := chi.URLParam(r, "id")
+
+	if err := validateUserId(userId); err != nil {
+		return "", http.StatusBadRequest, err
+	}
+
+	session := uh.sm.GetSessionFromContext(r)
+	if session == nil {
+		return "", http.StatusInternalServerError, errors.New("empty session")
+	}
+
+	if session.UserId != userId {
+		return "", http.StatusForbidden, errors.New("access denied")
+	}
+
+	return userId, 0, nil
 }
 
 func convertUser(id, email, nickname string) *responseUser {

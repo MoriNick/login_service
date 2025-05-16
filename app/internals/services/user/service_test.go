@@ -6,12 +6,11 @@ import (
 	"log/slog"
 	"login/internals/models"
 	repo "login/internals/services/user/mock"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/argon2"
 )
 
 type discardHandler struct{}
@@ -28,9 +27,6 @@ func getStubLogger() *slog.Logger {
 
 // Check all errors in service.Registration()
 func TestRegistration(t *testing.T) {
-	_ = os.Setenv("JWT_SECRET", "secret")
-	defer os.Clearenv()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -70,13 +66,13 @@ func TestRegistration(t *testing.T) {
 			name:        "select_by_email_exist",
 			email:       "email",
 			selectEmail: &selectEmailType{candidate: mockSelectOut},
-			expErr:      &ServiceError{ClientMessage: errEmailExist.Error()},
+			expErr:      errEmailExist,
 		},
 		{
 			name:        "select_by_email_error",
 			email:       "email",
 			selectEmail: &selectEmailType{err: errors.New("database error")},
-			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:      &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:           "select_by_nickname_exist",
@@ -84,7 +80,7 @@ func TestRegistration(t *testing.T) {
 			nickname:       "nick",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{candidate: mockSelectOut},
-			expErr:         &ServiceError{ClientMessage: errNicknameExist.Error()},
+			expErr:         errNicknameExist,
 		},
 		{
 			name:           "select_by_nickname_error",
@@ -92,7 +88,7 @@ func TestRegistration(t *testing.T) {
 			nickname:       "nick",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{err: errors.New("database error")},
-			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:         &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:           "create_user_error",
@@ -102,7 +98,7 @@ func TestRegistration(t *testing.T) {
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{nil, nil},
 			createUser:     &createUserType{err: errors.New("database error")},
-			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:         &ServiceError{ClientMessage: "internal error"},
 		},
 	}
 
@@ -125,7 +121,7 @@ func TestRegistration(t *testing.T) {
 					Times(1)
 			}
 
-			_, _, _, err := service.Registration(ctx, tCase.email, tCase.nickname, tCase.password)
+			_, err := service.Registration(ctx, tCase.email, tCase.nickname, tCase.password)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})
@@ -134,11 +130,6 @@ func TestRegistration(t *testing.T) {
 
 // Check all errors in service.Login()
 func TestLogin(t *testing.T) {
-	hashPassword := func(pass string, salt int) string {
-		hash, _ := bcrypt.GenerateFromPassword([]byte(pass), salt)
-		return string(hash)
-	}
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -169,21 +160,7 @@ func TestLogin(t *testing.T) {
 			name:           "user_not_exist",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{nil, nil},
-			expErr:         &ServiceError{ClientMessage: errUserNotFound.Error()},
-		},
-		{
-			name:     "incorrect_salt",
-			param:    "email",
-			password: "password",
-			selectEmail: &selectEmailType{
-				candidate: &models.User{
-					Id:       "id",
-					Email:    "email",
-					Nickname: "nick",
-					Password: hashPassword("password", bcrypt.MinCost),
-				},
-			},
-			expErr: &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:         errUserNotFound,
 		},
 		{
 			name:     "incorrect_password",
@@ -194,21 +171,21 @@ func TestLogin(t *testing.T) {
 					Id:       "id",
 					Email:    "email",
 					Nickname: "nick",
-					Password: hashPassword("passsword", bcrypt.DefaultCost),
+					Password: string(argon2.Key([]byte("word"), argonSalt, 3, 32*1024, 2, 32)),
 				},
 			},
-			expErr: &ServiceError{ClientMessage: errIncorrectPassword.Error()},
+			expErr: errIncorrectPassword,
 		},
 		{
 			name:        "select_email_error",
 			selectEmail: &selectEmailType{err: errors.New("database error")},
-			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:      &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:           "select_nickname_error",
 			selectEmail:    &selectEmailType{nil, nil},
 			selectNickname: &selectNicknameType{err: errors.New("database error")},
-			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:         &ServiceError{ClientMessage: "internal error"},
 		},
 	}
 
@@ -225,7 +202,7 @@ func TestLogin(t *testing.T) {
 					Times(1)
 			}
 
-			_, _, _, err := service.Login(ctx, tCase.param, tCase.password)
+			_, err := service.Login(ctx, tCase.param, tCase.password)
 			require.Error(t, err)
 			require.EqualError(t, err, tCase.expErr.Error())
 		})
@@ -256,12 +233,12 @@ func TestGetUser(t *testing.T) {
 		{
 			name:     "user_not_exist",
 			selectId: &selectIdType{nil, nil},
-			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
+			expErr:   errUserNotFound,
 		},
 		{
 			name:     "inernal_error",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:   &ServiceError{ClientMessage: "internal error"},
 		},
 	}
 
@@ -281,11 +258,6 @@ func TestGetUser(t *testing.T) {
 
 // Check all errors in service.UpdatePassword()
 func TestUpdatePassword(t *testing.T) {
-	hashPassword := func(pass string, salt int) string {
-		hash, _ := bcrypt.GenerateFromPassword([]byte(pass), salt)
-		return string(hash)
-	}
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -311,25 +283,12 @@ func TestUpdatePassword(t *testing.T) {
 		{
 			name:     "select_user_return_error",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:   &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:     "user_not_found",
 			selectId: &selectIdType{nil, nil},
-			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
-		},
-		{
-			name:        "incorrect_cost_to_hash_password",
-			id:          "id",
-			oldPassword: "old",
-			newPassword: "new",
-			selectId: &selectIdType{
-				user: &models.User{
-					Id:       "id",
-					Password: hashPassword("old", bcrypt.MinCost),
-				},
-			},
-			expErr: &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:   errUserNotFound,
 		},
 		{
 			name:        "incorrect_password",
@@ -338,10 +297,10 @@ func TestUpdatePassword(t *testing.T) {
 			selectId: &selectIdType{
 				user: &models.User{
 					Id:       "id",
-					Password: hashPassword("another_old", bcrypt.DefaultCost),
+					Password: string(argon2.Key([]byte("password"), argonSalt, 3, 32*1024, 2, 32)),
 				},
 			},
-			expErr: &ServiceError{ClientMessage: errIncorrectPassword.Error()},
+			expErr: errIncorrectPassword,
 		},
 		{
 			name:        "update_user_return_error",
@@ -351,11 +310,11 @@ func TestUpdatePassword(t *testing.T) {
 			selectId: &selectIdType{
 				user: &models.User{
 					Id:       "id",
-					Password: hashPassword("old", bcrypt.DefaultCost),
+					Password: string(argon2.Key([]byte("old"), argonSalt, 3, 32*1024, 2, 32)),
 				},
 			},
 			updateError: errors.New("database error"),
-			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:      &ServiceError{ClientMessage: "internal error"},
 		},
 	}
 
@@ -412,13 +371,13 @@ func TestUpdateNickname(t *testing.T) {
 			name:     "select_by_id_return_error",
 			id:       "id",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:   &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:     "user_not_found",
 			id:       "id",
 			selectId: &selectIdType{nil, nil},
-			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
+			expErr:   errUserNotFound,
 		},
 		{
 			name:        "select_by_nickname_return_error",
@@ -431,7 +390,7 @@ func TestUpdateNickname(t *testing.T) {
 				},
 			},
 			selectNickname: &selectNicknameType{nil, errors.New("database error")},
-			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:         &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:        "nickname_collision",
@@ -449,7 +408,7 @@ func TestUpdateNickname(t *testing.T) {
 					Nickname: "new_nickname",
 				},
 			},
-			expErr: &ServiceError{ClientMessage: errNicknameExist.Error()},
+			expErr: errNicknameExist,
 		},
 		{
 			name:        "update_user_return_error",
@@ -463,7 +422,7 @@ func TestUpdateNickname(t *testing.T) {
 			},
 			selectNickname: &selectNicknameType{nil, nil},
 			updateError:    errors.New("database error"),
-			expErr:         &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:         &ServiceError{ClientMessage: "internal error"},
 		},
 	}
 
@@ -528,13 +487,13 @@ func TestUpdateEmail(t *testing.T) {
 			name:     "select_by_id_return_error",
 			id:       "id",
 			selectId: &selectIdType{err: errors.New("database error")},
-			expErr:   &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:   &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:     "user_not_found",
 			id:       "id",
 			selectId: &selectIdType{nil, nil},
-			expErr:   &ServiceError{ClientMessage: errUserNotFound.Error()},
+			expErr:   errUserNotFound,
 		},
 		{
 			name:     "select_by_email_return_error",
@@ -547,7 +506,7 @@ func TestUpdateEmail(t *testing.T) {
 				},
 			},
 			selectEmail: &selectEmailType{nil, errors.New("database error")},
-			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:      &ServiceError{ClientMessage: "internal error"},
 		},
 		{
 			name:     "email_collision",
@@ -565,7 +524,7 @@ func TestUpdateEmail(t *testing.T) {
 					Email: "new_email",
 				},
 			},
-			expErr: &ServiceError{ClientMessage: errEmailExist.Error()},
+			expErr: errEmailExist,
 		},
 		{
 			name:     "update_user_return_error",
@@ -579,7 +538,7 @@ func TestUpdateEmail(t *testing.T) {
 			},
 			selectEmail: &selectEmailType{nil, nil},
 			updateError: errors.New("database error"),
-			expErr:      &ServiceError{ClientMessage: errInternal.Error()},
+			expErr:      &ServiceError{ClientMessage: "internal error"},
 		},
 	}
 
