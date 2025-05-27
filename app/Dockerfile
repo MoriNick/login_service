@@ -2,10 +2,10 @@ FROM golang:1.23.8-alpine3.20 AS build
 
 WORKDIR /app
 
-COPY ./app/go.* ./
+COPY ./go.* ./
 RUN go mod download
 
-COPY ./app/ ./
+COPY ./ ./
 RUN GOOS=linux GOARCH=amd64 go build -o login_service ./cmd
 
 FROM scratch

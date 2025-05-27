@@ -2,14 +2,13 @@ package user
 
 import (
 	"context"
+	"encoding/base64"
 	"log/slog"
 
 	"login/internals/models"
 
 	"golang.org/x/crypto/argon2"
 )
-
-var argonSalt = []byte("TH-WEhvHmrtd4tfVkuNUDjP2XeHw4hfX25X3bwhKeOU")
 
 var (
 	errEmailExist        = newServiceClientError("email already exist")
@@ -18,6 +17,12 @@ var (
 	errIncorrectPassword = newServiceClientError("incorrect password")
 	errIncorrectEmail    = newServiceClientError("incorrect email")
 )
+
+var argonSalt = []byte("TH-WEhvHmrtd4tfVkuNUDjP2XeHw4hfX25X3bwhKeOU")
+
+func hashPassword(p string) string {
+	return base64.StdEncoding.EncodeToString(argon2.Key([]byte(p), argonSalt, 3, 32*1024, 2, 32))
+}
 
 type UserService struct {
 	log  *slog.Logger
@@ -43,7 +48,7 @@ func (us *UserService) Registration(ctx context.Context, email, nickname, passwo
 		return "", errNicknameExist
 	}
 
-	hash := argon2.Key([]byte(password), argonSalt, 3, 32*1024, 2, 32)
+	hash := hashPassword(password)
 
 	id, err := us.repo.CreateUser(ctx, email, nickname, string(hash))
 	if err != nil {
@@ -68,7 +73,7 @@ func (us *UserService) Login(ctx context.Context, param, password string) (strin
 		}
 	}
 
-	hash := argon2.Key([]byte(password), argonSalt, 3, 32*1024, 2, 32)
+	hash := hashPassword(password)
 	if user.Password != string(hash) {
 		return "", errIncorrectPassword
 	}
@@ -104,14 +109,14 @@ func (us *UserService) UpdatePassword(ctx context.Context, id string, oldPasswor
 		return nil, errUserNotFound
 	}
 
-	hash := argon2.Key([]byte(oldPassword), argonSalt, 3, 32*1024, 2, 32)
-	if user.Password != string(hash) {
+	hashOldPassword := hashPassword(oldPassword)
+	if user.Password != hashOldPassword {
 		return nil, errIncorrectPassword
 	}
 
-	hash = argon2.Key([]byte(newPassword), argonSalt, 3, 32*1024, 2, 32)
+	hashNewPassword := hashPassword(newPassword)
 
-	user.Password = string(hash)
+	user.Password = hashNewPassword
 	if err := us.repo.UpdateUser(ctx, user); err != nil {
 		return nil, newServiceInternalError("UpdateUser", err)
 	}

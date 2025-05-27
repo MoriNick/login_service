@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	errInvalidEmail     = errors.New("Invalid email")
-	errInvalidNickname  = errors.New("Invalid nickname")
-	errInvalidPassword  = errors.New("Invalid password")
-	errInvalidParameter = errors.New("Invalid email/nickname")
-	errInvalidUserId    = errors.New("Invalid user id")
+	errInvalidEmail     = errors.New("invalid email")
+	errInvalidNickname  = errors.New("invalid nickname")
+	errInvalidPassword  = errors.New("invalid password")
+	errInvalidParameter = errors.New("invalid email/nickname")
+	errInvalidUserId    = errors.New("invalid user id")
 )
 
 var validate *validator.Validate

@@ -13,7 +13,5 @@ docker-start: docker-clean
 utests:
 	cd $(CURRENT_DIR)/app &&\
 	 	go test ./internals/transport/handlers/user &&\
-		go test ./internals/transport/middlewares &&\
 		go test ./internals/services/user &&\
-		go test ./internals/database/repositories &&\
-		go test ./pkg/tokens
+		go test ./pkg/session

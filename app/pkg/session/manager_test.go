@@ -21,9 +21,9 @@ func (dh discardHandler) WithAttrs(attrs []slog.Attr) slog.Handler  { return dh 
 func (dh discardHandler) WithGroup(name string) slog.Handler        { return dh }
 
 func prepareManager(ctx context.Context, store SessionStore) *SessionManager {
-	gcInterval, _ := time.ParseDuration("10s")
-	idleExpiration, _ := time.ParseDuration("5s")
-	absoluteExpiration, _ := time.ParseDuration("15s")
+	gcInterval := time.Duration(10 * time.Second)
+	idleExpiration := time.Duration(5 * time.Second)
+	absoluteExpiration := time.Duration(15 * time.Second)
 	cookieName := "session_id"
 
 	return NewSessionManager(

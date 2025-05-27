@@ -60,7 +60,7 @@ func (uh *userHandler) Registration(w http.ResponseWriter, r *http.Request) {
 			name:    "JsonDecode",
 			message: err.Error(),
 		}
-		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -83,7 +83,7 @@ func (uh *userHandler) Registration(w http.ResponseWriter, r *http.Request) {
 			name:    "CreateAndSaveSession",
 			message: err.Error(),
 		}
-		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -101,7 +101,7 @@ func (uh *userHandler) Login(w http.ResponseWriter, r *http.Request) {
 			name:    "JsonDecode",
 			message: err.Error(),
 		}
-		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -124,7 +124,7 @@ func (uh *userHandler) Login(w http.ResponseWriter, r *http.Request) {
 			name:    "LoadSession",
 			message: err.Error(),
 		}
-		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -137,7 +137,7 @@ func (uh *userHandler) Login(w http.ResponseWriter, r *http.Request) {
 				name:    "CreateAndSaveSession",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 	}
@@ -157,7 +157,7 @@ func (uh *userHandler) Logout(w http.ResponseWriter, r *http.Request) {
 				name:    "Logout",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 		errorHandler(w, nil, status, err.Error())
@@ -178,7 +178,7 @@ func (uh *userHandler) Logout(w http.ResponseWriter, r *http.Request) {
 			name:    "DestroySession",
 			message: err.Error(),
 		}
-		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -197,7 +197,7 @@ func (uh *userHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 				name:    "GetUser",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 		errorHandler(w, nil, status, err.Error())
@@ -219,18 +219,18 @@ func (uh *userHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	limit := r.URL.Query().Get("limit")
 	offset := r.URL.Query().Get("offset")
 	if limit == "" || offset == "" {
-		errorHandler(w, nil, http.StatusBadRequest, "Empty limit or offset")
+		errorHandler(w, nil, http.StatusBadRequest, "empty limit or offset")
 		return
 	}
 
 	uintLimit, err := strconv.ParseUint(limit, 10, 64)
 	if err != nil {
-		errorHandler(w, nil, http.StatusBadRequest, "Incorrect limit parameter")
+		errorHandler(w, nil, http.StatusBadRequest, "incorrect limit parameter")
 		return
 	}
 	uintOffset, err := strconv.ParseUint(offset, 10, 64)
 	if err != nil {
-		errorHandler(w, nil, http.StatusBadRequest, "Incorrect offset parameter")
+		errorHandler(w, nil, http.StatusBadRequest, "incorrect offset parameter")
 		return
 	}
 
@@ -259,7 +259,7 @@ func (uh *userHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 				name:    "UpdateUser",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 		errorHandler(w, nil, status, err.Error())
@@ -277,7 +277,7 @@ func (uh *userHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 				name:    "JsonDecode",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 
@@ -303,7 +303,7 @@ func (uh *userHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 				name:    "JsonDecode",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 
@@ -329,7 +329,7 @@ func (uh *userHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 				name:    "JsonDecode",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 
@@ -347,7 +347,7 @@ func (uh *userHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		response = convertUser(user.Id, user.Email, user.Nickname)
 
 	} else {
-		errorHandler(w, nil, http.StatusNotFound, "Page not found")
+		errorHandler(w, nil, http.StatusNotFound, "page not found")
 		return
 	}
 
@@ -364,7 +364,7 @@ func (uh *userHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 				name:    "DeleteUser",
 				message: err.Error(),
 			}
-			errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+			errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 			return
 		}
 		errorHandler(w, nil, status, err.Error())
@@ -379,7 +379,7 @@ func (uh *userHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 			name:    "DeleteUser",
 			message: "lost session cookie",
 		}
-		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -397,7 +397,7 @@ func (uh *userHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 			name:    "DestroySession",
 			message: err.Error(),
 		}
-		errorHandler(w, logError, http.StatusInternalServerError, "Internal error")
+		errorHandler(w, logError, http.StatusInternalServerError, "internal error")
 		return
 	}
 

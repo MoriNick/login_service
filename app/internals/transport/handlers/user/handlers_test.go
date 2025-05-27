@@ -36,7 +36,6 @@ func (dh discardHandler) WithGroup(name string) slog.Handler        { return dh 
 
 func prepareTestRouter(us *mock.MockUserService, sm *mock.MockSessionManager) chi.Router {
 	log := slog.New(discardHandler{})
-	slog.SetDefault(log)
 	router := chi.NewRouter()
 
 	sm.EXPECT().
@@ -74,12 +73,12 @@ func TestRegistration(t *testing.T) {
 
 	var strType string
 
-	type serviceReturnType struct {
+	type serviceResultType struct {
 		userId string
 		err    error
 	}
 
-	type createSessionType struct {
+	type sessionResultType struct {
 		session *session.Session
 		err     error
 	}
@@ -87,25 +86,25 @@ func TestRegistration(t *testing.T) {
 	cases := []struct {
 		name          string
 		body          io.Reader
-		serviceReturn *serviceReturnType
-		createSession *createSessionType
+		serviceResult *serviceResultType
+		sessionResult *sessionResultType
 		expStatus     int
 		expBody       string
 	}{
 		{
-			name:      "empty_body",
+			name:      "parse_body_error",
 			body:      strings.NewReader(""),
 			expStatus: http.StatusInternalServerError,
-			expBody:   prepareExpResponseBody(&responseError{"Internal error"}),
+			expBody:   prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
-			name:      "invalid_email",
+			name:      "invalid_input_parameters",
 			body:      prepareTestRequestBody(&registrationEntity{Email: "aaa"}),
 			expStatus: http.StatusBadRequest,
 			expBody:   prepareExpResponseBody(&responseError{errInvalidEmail.Error()}),
 		},
 		{
-			name: "service_return_error",
+			name: "service_return_with_error",
 			body: prepareTestRequestBody(
 				&registrationEntity{
 					Email:    "email@mail.ru",
@@ -113,7 +112,7 @@ func TestRegistration(t *testing.T) {
 					Password: "12345678",
 				},
 			),
-			serviceReturn: &serviceReturnType{
+			serviceResult: &serviceResultType{
 				"",
 				&us.ServiceError{ClientMessage: "email already exist"},
 			},
@@ -121,7 +120,7 @@ func TestRegistration(t *testing.T) {
 			expBody:   prepareExpResponseBody(&responseError{"email already exist"}),
 		},
 		{
-			name: "create_session_return_with_error",
+			name: "cannot_craete_session",
 			body: prepareTestRequestBody(
 				&registrationEntity{
 					Email:    "email@mail.ru",
@@ -129,10 +128,10 @@ func TestRegistration(t *testing.T) {
 					Password: "12345678",
 				},
 			),
-			serviceReturn: &serviceReturnType{"userId", nil},
-			createSession: &createSessionType{nil, errors.New("something wrong")},
+			serviceResult: &serviceResultType{"userId", nil},
+			sessionResult: &sessionResultType{nil, errors.New("something wrong")},
 			expStatus:     http.StatusInternalServerError,
-			expBody:       prepareExpResponseBody(&responseError{"Internal error"}),
+			expBody:       prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
 			name: "without_errors",
@@ -143,8 +142,8 @@ func TestRegistration(t *testing.T) {
 					Password: "12345678",
 				},
 			),
-			serviceReturn: &serviceReturnType{"userId", nil},
-			createSession: &createSessionType{&session.Session{Id: "session_id"}, nil},
+			serviceResult: &serviceResultType{"userId", nil},
+			sessionResult: &sessionResultType{&session.Session{Id: "session_id"}, nil},
 			expStatus:     http.StatusOK,
 			expBody:       prepareExpResponseBody(&responseUserId{"userId"}),
 		},
@@ -155,41 +154,38 @@ func TestRegistration(t *testing.T) {
 			req := httptest.NewRequest("POST", "http://localhost/api/user/registration", tCase.body)
 			w := httptest.NewRecorder()
 
-			if tCase.serviceReturn != nil {
+			if tCase.serviceResult != nil {
 				serviceMock.EXPECT().
 					Registration(
-						//TODO
 						gomock.Any(),
 						gomock.AssignableToTypeOf(strType),
 						gomock.AssignableToTypeOf(strType),
 						gomock.AssignableToTypeOf(strType),
 					).
 					Return(
-						tCase.serviceReturn.userId,
-						tCase.serviceReturn.err,
+						tCase.serviceResult.userId,
+						tCase.serviceResult.err,
 					).
 					Times(1)
 			}
 
-			if tCase.createSession != nil {
+			if tCase.sessionResult != nil {
 				sessionManagerMock.EXPECT().
 					CreateAndSaveSession(
-						//TODO
 						gomock.Any(),
-						tCase.serviceReturn.userId,
+						tCase.serviceResult.userId,
 					).
 					Return(
-						tCase.createSession.session,
-						tCase.createSession.err,
+						tCase.sessionResult.session,
+						tCase.sessionResult.err,
 					).
 					Times(1)
 
-				if tCase.createSession.err == nil {
+				if tCase.sessionResult.err == nil {
 					sessionManagerMock.EXPECT().
 						SetUpdatedSessionCookie(
-							//TODO
 							gomock.Any(),
-							tCase.createSession.session.Id,
+							tCase.sessionResult.session.Id,
 						).
 						Do(func(w http.ResponseWriter, sessionId string) {
 							http.SetCookie(w, &http.Cookie{Name: "session_id", Value: sessionId})
@@ -202,9 +198,9 @@ func TestRegistration(t *testing.T) {
 
 			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
-			if w.Code == http.StatusOK {
-				cookie := w.Result().Cookies()[0]
-				require.NotEmpty(t, cookie)
+			if tCase.expStatus == http.StatusOK {
+				cookies := w.Result().Cookies()
+				require.Equal(t, 1, len(cookies))
 			}
 		})
 	}
@@ -219,6 +215,8 @@ func TestLogin(t *testing.T) {
 	serviceMock := mock.NewMockUserService(ctrl)
 	sessionManagerMock := mock.NewMockSessionManager(ctrl)
 	router := prepareTestRouter(serviceMock, sessionManagerMock)
+
+	var strType string
 
 	type serviceResultType struct {
 		userId string
@@ -245,19 +243,19 @@ func TestLogin(t *testing.T) {
 		expBody       string
 	}{
 		{
-			name:      "empty_body",
+			name:      "parse_body_error",
 			body:      strings.NewReader(""),
 			expStatus: http.StatusInternalServerError,
-			expBody:   prepareExpResponseBody(&responseError{"Internal error"}),
+			expBody:   prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
-			name:      "validation_(invalid_email/nickname)",
+			name:      "invalid_parameters",
 			body:      prepareTestRequestBody(&loginEntity{Param: "aaa"}),
 			expStatus: http.StatusBadRequest,
 			expBody:   prepareExpResponseBody(&responseError{errInvalidParameter.Error()}),
 		},
 		{
-			name: "service_return_error",
+			name: "service_return_with_error",
 			body: prepareTestRequestBody(&loginEntity{Param: "email@mail.ru", Password: "12345678"}),
 			serviceResult: &serviceResultType{
 				"",
@@ -267,21 +265,21 @@ func TestLogin(t *testing.T) {
 			expBody:   prepareExpResponseBody(&responseError{"email already exist"}),
 		},
 		{
-			name:          "load_session_return_with_error",
+			name:          "cannot_load_session",
 			body:          prepareTestRequestBody(&loginEntity{Param: "email@mail.ru", Password: "12345678"}),
 			serviceResult: &serviceResultType{"", nil},
 			loadSession:   &loadSessionType{nil, errors.New("something wrong")},
 			expStatus:     http.StatusInternalServerError,
-			expBody:       prepareExpResponseBody(&responseError{"Internal error"}),
+			expBody:       prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
-			name:          "create_session_return_with_error",
+			name:          "cannot_create_session",
 			body:          prepareTestRequestBody(&loginEntity{Param: "email@mail.ru", Password: "12345678"}),
 			serviceResult: &serviceResultType{"", nil},
 			loadSession:   &loadSessionType{nil, nil},
 			createSession: &createSessionType{nil, errors.New("something wrong")},
 			expStatus:     http.StatusInternalServerError,
-			expBody:       prepareExpResponseBody(&responseError{"Internal error"}),
+			expBody:       prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
 			name:          "without_errors",
@@ -293,14 +291,11 @@ func TestLogin(t *testing.T) {
 		},
 	}
 
-	var strType string
-
 	for _, tCase := range cases {
 		t.Run(tCase.name, func(t *testing.T) {
 			if tCase.serviceResult != nil {
 				serviceMock.EXPECT().
 					Login(
-						//TODO
 						gomock.Any(),
 						gomock.AssignableToTypeOf(strType),
 						gomock.AssignableToTypeOf(strType),
@@ -315,7 +310,6 @@ func TestLogin(t *testing.T) {
 			if tCase.loadSession != nil {
 				sessionManagerMock.EXPECT().
 					LoadSession(
-						//TODO
 						gomock.Any(),
 						tCase.serviceResult.userId,
 					).
@@ -325,10 +319,10 @@ func TestLogin(t *testing.T) {
 					).
 					Times(1)
 
+				// to check "without_errors"
 				if tCase.loadSession.err == nil && tCase.loadSession.session != nil {
 					sessionManagerMock.EXPECT().
 						SetUpdatedSessionCookie(
-							//TODO
 							gomock.Any(),
 							tCase.loadSession.session.Id,
 						).
@@ -342,7 +336,6 @@ func TestLogin(t *testing.T) {
 			if tCase.createSession != nil {
 				sessionManagerMock.EXPECT().
 					CreateAndSaveSession(
-						//TODO
 						gomock.Any(),
 						tCase.serviceResult.userId,
 					).
@@ -360,9 +353,9 @@ func TestLogin(t *testing.T) {
 
 			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
-			if w.Code == http.StatusOK {
-				cookie := w.Result().Cookies()[0]
-				require.NotEmpty(t, cookie)
+			if tCase.expStatus == http.StatusOK {
+				cookies := w.Result().Cookies()
+				require.Equal(t, 1, len(cookies))
 			}
 		})
 	}
@@ -397,7 +390,7 @@ func TestGetUser(t *testing.T) {
 			expBody:   prepareExpResponseBody(&responseError{errInvalidUserId.Error()}),
 		},
 		{
-			name:   "service_return_error",
+			name:   "service_return_with_error",
 			userId: "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			serviceResult: &serviceResultType{
 				nil,
@@ -431,7 +424,6 @@ func TestGetUser(t *testing.T) {
 			if tCase.serviceResult != nil {
 				serviceMock.EXPECT().
 					GetUser(
-						//TODO
 						gomock.Any(),
 						tCase.userId,
 					).
@@ -439,7 +431,6 @@ func TestGetUser(t *testing.T) {
 					Times(1)
 
 				sessionManagerMock.EXPECT().
-					//TODO Any()
 					GetSessionFromContext(gomock.Any()).
 					Return(&session.Session{UserId: tCase.userId}).
 					Times(1)
@@ -479,50 +470,50 @@ func TestGetAllUsers(t *testing.T) {
 		limit         string
 		offset        string
 		serviceResult *serviceResultType
-		expCode       int
+		expStatus     int
 		expBody       string
 	}{
 		{
-			name:    "empty_parameters",
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"Empty limit or offset"}),
+			name:      "empty_parameters",
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"empty limit or offset"}),
 		},
 		{
-			name:    "empty_offset",
-			limit:   "10",
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"Empty limit or offset"}),
+			name:      "empty_offset",
+			limit:     "10",
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"empty limit or offset"}),
 		},
 		{
-			name:    "empty_limit",
-			offset:  "10",
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"Empty limit or offset"}),
+			name:      "empty_limit",
+			offset:    "10",
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"empty limit or offset"}),
 		},
 		{
-			name:    "incorrect_limit",
-			limit:   "-10",
-			offset:  "10",
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"Incorrect limit parameter"}),
+			name:      "incorrect_limit",
+			limit:     "-10",
+			offset:    "10",
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"incorrect limit parameter"}),
 		},
 		{
-			name:    "incorrect_offset",
-			limit:   "10",
-			offset:  "-10",
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"Incorrect offset parameter"}),
+			name:      "incorrect_offset",
+			limit:     "10",
+			offset:    "-10",
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"incorrect offset parameter"}),
 		},
 		{
-			name:   "service_return_error",
+			name:   "service_return_with_error",
 			limit:  "3",
 			offset: "0",
 			serviceResult: &serviceResultType{
 				nil,
 				&us.ServiceError{ClientMessage: "internal error", Err: errors.New("internalsss")},
 			},
-			expCode: http.StatusInternalServerError,
-			expBody: prepareExpResponseBody(&responseError{"internal error"}),
+			expStatus: http.StatusInternalServerError,
+			expBody:   prepareExpResponseBody(&responseError{"internal error"}),
 		},
 	}
 
@@ -531,7 +522,6 @@ func TestGetAllUsers(t *testing.T) {
 			if tCase.serviceResult != nil {
 				serviceMock.EXPECT().
 					GetAllUsers(
-						//TODO
 						gomock.Any(),
 						gomock.AssignableToTypeOf(uintType),
 						gomock.AssignableToTypeOf(uintType),
@@ -539,6 +529,7 @@ func TestGetAllUsers(t *testing.T) {
 					Return(tCase.serviceResult.users, tCase.serviceResult.err).
 					Times(1)
 			}
+
 			req := httptest.NewRequest(
 				"GET",
 				"http://localhost/api/user/all?limit="+tCase.limit+"&offset="+tCase.offset,
@@ -548,7 +539,7 @@ func TestGetAllUsers(t *testing.T) {
 
 			router.ServeHTTP(w, req)
 
-			require.Equal(t, tCase.expCode, w.Code)
+			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
 		})
 	}
@@ -577,37 +568,37 @@ func TestUpdateUser(t *testing.T) {
 		updateType    string
 		reqBody       io.Reader
 		serviceResult *serviceResultType
-		expCode       int
+		expStatus     int
 		expBody       string
 	}{
 		{
 			name:       "invalid_id",
 			id:         "idd",
 			updateType: "invalid",
-			expCode:    http.StatusBadRequest,
+			expStatus:  http.StatusBadRequest,
 			expBody:    prepareExpResponseBody(&responseError{errInvalidUserId.Error()}),
 		},
 		{
 			name:       "incorrect_type",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			updateType: "invalid",
-			expCode:    http.StatusNotFound,
-			expBody:    prepareExpResponseBody(&responseError{"Page not found"}),
+			expStatus:  http.StatusNotFound,
+			expBody:    prepareExpResponseBody(&responseError{"page not found"}),
 		},
 		{
 			name:       "incorrect_body_in_update_password",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			updateType: "password",
 			reqBody:    strings.NewReader(""),
-			expCode:    http.StatusInternalServerError,
-			expBody:    prepareExpResponseBody(&responseError{"Internal error"}),
+			expStatus:  http.StatusInternalServerError,
+			expBody:    prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
 			name:       "invalid_new_password_in_update_password",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			updateType: "password",
 			reqBody:    prepareTestRequestBody(&updatePassword{NewPassword: "ss"}),
-			expCode:    http.StatusBadRequest,
+			expStatus:  http.StatusBadRequest,
 			expBody:    prepareExpResponseBody(&responseError{errInvalidPassword.Error()}),
 		},
 		{
@@ -619,23 +610,23 @@ func TestUpdateUser(t *testing.T) {
 				nil,
 				&us.ServiceError{ClientMessage: "incorrect old password"},
 			},
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"incorrect old password"}),
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"incorrect old password"}),
 		},
 		{
 			name:       "incorrect_body_in_update_nickname",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			updateType: "nickname",
 			reqBody:    strings.NewReader(""),
-			expCode:    http.StatusInternalServerError,
-			expBody:    prepareExpResponseBody(&responseError{"Internal error"}),
+			expStatus:  http.StatusInternalServerError,
+			expBody:    prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
 			name:       "invalid_nickname_in_update_nickname",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			updateType: "nickname",
 			reqBody:    prepareTestRequestBody(&updateNickname{"00"}),
-			expCode:    http.StatusBadRequest,
+			expStatus:  http.StatusBadRequest,
 			expBody:    prepareExpResponseBody(&responseError{errInvalidNickname.Error()}),
 		},
 		{
@@ -647,23 +638,23 @@ func TestUpdateUser(t *testing.T) {
 				nil,
 				&us.ServiceError{ClientMessage: "nickname already exist"},
 			},
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"nickname already exist"}),
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"nickname already exist"}),
 		},
 		{
 			name:       "incorrect_body_in_update_email",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			updateType: "email",
 			reqBody:    strings.NewReader(""),
-			expCode:    http.StatusInternalServerError,
-			expBody:    prepareExpResponseBody(&responseError{"Internal error"}),
+			expStatus:  http.StatusInternalServerError,
+			expBody:    prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
 			name:       "invalid_email_in_update_email",
 			id:         "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			updateType: "email",
 			reqBody:    prepareTestRequestBody(&updateEmail{"email"}),
-			expCode:    http.StatusBadRequest,
+			expStatus:  http.StatusBadRequest,
 			expBody:    prepareExpResponseBody(&responseError{errInvalidEmail.Error()}),
 		},
 		{
@@ -675,8 +666,8 @@ func TestUpdateUser(t *testing.T) {
 				nil,
 				&us.ServiceError{ClientMessage: "email already exist"},
 			},
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{"email already exist"}),
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{"email already exist"}),
 		},
 	}
 
@@ -741,7 +732,7 @@ func TestUpdateUser(t *testing.T) {
 
 			router.ServeHTTP(w, req)
 
-			require.Equal(t, tCase.expCode, w.Code)
+			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
 		})
 	}
@@ -773,27 +764,27 @@ func TestDeleteUser(t *testing.T) {
 		setCookie      bool
 		serviceResult  *serviceResultType
 		destroySession *destroySessionType
-		expCode        int
+		expStatus      int
 		expBody        string
 	}{
 		{
-			name:    "invalid_id",
-			id:      "id",
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&responseError{errInvalidUserId.Error()}),
+			name:      "invalid_id",
+			id:        "id",
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&responseError{errInvalidUserId.Error()}),
 		},
 		{
-			name:    "empty_session_cookie",
-			id:      "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
-			expCode: http.StatusInternalServerError,
-			expBody: prepareExpResponseBody(&responseError{"Internal error"}),
+			name:      "empty_session_cookie",
+			id:        "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
+			expStatus: http.StatusInternalServerError,
+			expBody:   prepareExpResponseBody(&responseError{"internal error"}),
 		},
 		{
-			name:          "service_return_error",
+			name:          "service_return_with_error",
 			id:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			setCookie:     true,
 			serviceResult: &serviceResultType{&us.ServiceError{ClientMessage: "user not found"}},
-			expCode:       http.StatusBadRequest,
+			expStatus:     http.StatusBadRequest,
 			expBody:       prepareExpResponseBody(&responseError{"user not found"}),
 		},
 		{
@@ -802,8 +793,8 @@ func TestDeleteUser(t *testing.T) {
 			setCookie:      true,
 			serviceResult:  &serviceResultType{nil},
 			destroySession: &destroySessionType{err: errors.New("something wrong")},
-			expCode:        http.StatusInternalServerError,
-			expBody:        prepareExpResponseBody(&responseError{"Internal error"}),
+			expStatus:      http.StatusInternalServerError,
+			expBody:        prepareExpResponseBody(&responseError{"internal error"}),
 		},
 	}
 
@@ -859,7 +850,7 @@ func TestDeleteUser(t *testing.T) {
 
 			router.ServeHTTP(w, req)
 
-			require.Equal(t, tCase.expCode, w.Code)
+			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
 		})
 	}
@@ -897,34 +888,34 @@ func TestReadAndValidateUserId(t *testing.T) {
 		name              string
 		userId            string
 		getSessionContext *getSessionContextType
-		expCode           int
+		expStatus         int
 		expBody           string
 	}{
 		{
-			name:    "invalid_user_id",
-			userId:  "invalidUserID",
-			expCode: http.StatusBadRequest,
-			expBody: prepareExpResponseBody(&bodyType{Err: errInvalidUserId}),
+			name:      "invalid_user_id",
+			userId:    "invalidUserID",
+			expStatus: http.StatusBadRequest,
+			expBody:   prepareExpResponseBody(&bodyType{Err: errInvalidUserId}),
 		},
 		{
 			name:              "empty_session",
 			userId:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			getSessionContext: &getSessionContextType{session: nil},
-			expCode:           http.StatusInternalServerError,
+			expStatus:         http.StatusInternalServerError,
 			expBody:           prepareExpResponseBody(&bodyType{Err: errors.New("empty session")}),
 		},
 		{
 			name:              "access_denied",
 			userId:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			getSessionContext: &getSessionContextType{session: &session.Session{UserId: "4fd047eb-1925-4d27-95f3-4bcda6ae201a"}},
-			expCode:           http.StatusForbidden,
+			expStatus:         http.StatusForbidden,
 			expBody:           prepareExpResponseBody(&bodyType{Err: errors.New("access denied")}),
 		},
 		{
 			name:              "without_errors",
 			userId:            "4fd047eb-1925-4d27-95f3-4bcda6ae201b",
 			getSessionContext: &getSessionContextType{session: &session.Session{UserId: "4fd047eb-1925-4d27-95f3-4bcda6ae201b"}},
-			expCode:           http.StatusOK,
+			expStatus:         http.StatusOK,
 			expBody:           prepareExpResponseBody(&bodyType{UserId: "4fd047eb-1925-4d27-95f3-4bcda6ae201b"}),
 		},
 	}
@@ -945,7 +936,7 @@ func TestReadAndValidateUserId(t *testing.T) {
 
 			router.ServeHTTP(w, r)
 
-			require.Equal(t, tCase.expCode, w.Code)
+			require.Equal(t, tCase.expStatus, w.Code)
 			require.Equal(t, tCase.expBody, w.Body.String())
 		})
 	}

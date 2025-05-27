@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"login/internals/models"
@@ -171,7 +172,7 @@ func TestLogin(t *testing.T) {
 					Id:       "id",
 					Email:    "email",
 					Nickname: "nick",
-					Password: string(argon2.Key([]byte("word"), argonSalt, 3, 32*1024, 2, 32)),
+					Password: base64.StdEncoding.EncodeToString(argon2.Key([]byte("old"), argonSalt, 3, 32*1024, 2, 32)),
 				},
 			},
 			expErr: errIncorrectPassword,
@@ -297,7 +298,7 @@ func TestUpdatePassword(t *testing.T) {
 			selectId: &selectIdType{
 				user: &models.User{
 					Id:       "id",
-					Password: string(argon2.Key([]byte("password"), argonSalt, 3, 32*1024, 2, 32)),
+					Password: base64.StdEncoding.EncodeToString(argon2.Key([]byte("password"), argonSalt, 3, 32*1024, 2, 32)),
 				},
 			},
 			expErr: errIncorrectPassword,
@@ -310,7 +311,7 @@ func TestUpdatePassword(t *testing.T) {
 			selectId: &selectIdType{
 				user: &models.User{
 					Id:       "id",
-					Password: string(argon2.Key([]byte("old"), argonSalt, 3, 32*1024, 2, 32)),
+					Password: base64.StdEncoding.EncodeToString(argon2.Key([]byte("old"), argonSalt, 3, 32*1024, 2, 32)),
 				},
 			},
 			updateError: errors.New("database error"),

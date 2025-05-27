@@ -8,7 +8,7 @@ import (
 )
 
 type UserRepository struct {
-	Storage
+	st Storage
 }
 
 func NewUserRepository(s Storage) *UserRepository {
@@ -16,16 +16,10 @@ func NewUserRepository(s Storage) *UserRepository {
 }
 
 func (ur *UserRepository) CreateUser(ctx context.Context, email, nickname, password string) (string, error) {
-	conn, err := ur.Acquire(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Release()
-
-	sql := `INSERT INTO users (id, email, nickname, password) VALUES(uuid_generate_v4(), $1, $2, $3) RETURNING id`
+	sql := `insert into users (id, email, nickname, password) values (uuid_generate_v4(), $1, $2, $3) returning id`
 	var id string
 
-	if err := conn.QueryRow(ctx, sql, email, nickname, password).Scan(&id); err != nil {
+	if err := ur.st.QueryRow(ctx, sql, email, nickname, password).Scan(&id); err != nil {
 		return "", err
 	}
 
@@ -33,16 +27,10 @@ func (ur *UserRepository) CreateUser(ctx context.Context, email, nickname, passw
 }
 
 func (ur *UserRepository) SelectUserById(ctx context.Context, id string) (*models.User, error) {
-	conn, err := ur.Acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-
-	sql := `SELECT id, email, nickname, password FROM users WHERE id=$1`
+	sql := `select id, email, nickname, password from users where id = $1`
 	var user models.User
 
-	if err := conn.QueryRow(ctx, sql, id).
+	if err := ur.st.QueryRow(ctx, sql, id).
 		Scan(&user.Id, &user.Email, &user.Nickname, &user.Password); err != nil {
 		if errors.Is(err, ErrNoRows) {
 			return nil, nil
@@ -54,14 +42,8 @@ func (ur *UserRepository) SelectUserById(ctx context.Context, id string) (*model
 }
 
 func (ur *UserRepository) SelectAllUsers(ctx context.Context, limit, offset uint64) ([]models.User, error) {
-	conn, err := ur.Acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-
-	sql := `SELECT id, email, nickname, password FROM users LIMIT $1 OFFSET $2`
-	rows, err := conn.Query(ctx, sql, limit, offset)
+	sql := `select id, email, nickname, password from users limit $1 offset $2`
+	rows, err := ur.st.Query(ctx, sql, limit, offset)
 	if err != nil {
 		if errors.Is(err, ErrNoRows) {
 			return nil, nil
@@ -70,7 +52,7 @@ func (ur *UserRepository) SelectAllUsers(ctx context.Context, limit, offset uint
 	}
 	defer rows.Close()
 
-	users := make([]models.User, 0)
+	users := make([]models.User, 0, limit)
 	for rows.Next() {
 		var user models.User
 		err := rows.Scan(&user.Id, &user.Email, &user.Nickname, &user.Password)
@@ -88,16 +70,10 @@ func (ur *UserRepository) SelectAllUsers(ctx context.Context, limit, offset uint
 }
 
 func (ur *UserRepository) SelectUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	conn, err := ur.Acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-
-	sql := `SELECT id, email, nickname, password FROM users WHERE email=$1`
+	sql := `select id, email, nickname, password from users where email = $1`
 	var user models.User
 
-	if err := conn.QueryRow(ctx, sql, email).
+	if err := ur.st.QueryRow(ctx, sql, email).
 		Scan(&user.Id, &user.Email, &user.Nickname, &user.Password); err != nil {
 		if errors.Is(err, ErrNoRows) {
 			return nil, nil
@@ -109,16 +85,10 @@ func (ur *UserRepository) SelectUserByEmail(ctx context.Context, email string) (
 }
 
 func (ur *UserRepository) SelectUserByNickname(ctx context.Context, nickname string) (*models.User, error) {
-	conn, err := ur.Acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-
-	sql := `SELECT id, email, nickname, password FROM users WHERE nickname=$1`
+	sql := `select id, email, nickname, password from users where nickname = $1`
 	var user models.User
 
-	if err := conn.QueryRow(ctx, sql, nickname).
+	if err := ur.st.QueryRow(ctx, sql, nickname).
 		Scan(&user.Id, &user.Email, &user.Nickname, &user.Password); err != nil {
 		if errors.Is(err, ErrNoRows) {
 			return nil, nil
@@ -130,29 +100,17 @@ func (ur *UserRepository) SelectUserByNickname(ctx context.Context, nickname str
 }
 
 func (ur *UserRepository) UpdateUser(ctx context.Context, user *models.User) error {
-	conn, err := ur.Acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
+	sql := `update users set email = $1, nickname = #2, password = $3 where id = $4`
 
-	sql := `UPDATE users SET email=$1, nickname=$2, password=$3 WHERE id=$4`
-
-	_, err = conn.Exec(ctx, sql, user.Email, user.Nickname, user.Password, user.Id)
+	_, err := ur.st.Exec(ctx, sql, user.Email, user.Nickname, user.Password, user.Id)
 
 	return err
 }
 
 func (ur *UserRepository) DeleteUser(ctx context.Context, id string) error {
-	conn, err := ur.Acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
+	sql := `delete from users where id = $1`
 
-	sql := `DELETE FROM users WHERE id=$1`
-
-	_, err = conn.Exec(ctx, sql, id)
+	_, err := ur.st.Exec(ctx, sql, id)
 
 	return err
 }

@@ -36,26 +36,25 @@ func main() {
 
 	router := chi.NewRouter()
 
-	DBConfig := cfg.GetDBConfig()
-	storage, err := db.NewStorage(mainCtx, DBConfig)
+	storage, err := db.NewStorage(mainCtx, cfg.GetDBConfig())
 	if err != nil {
 		l.Error("Database error", "error", err.Error())
 		os.Exit(1)
 	}
 
+	if err := uh.InitValidator(); err != nil {
+		l.Error("Init validator error", "error", err.Error())
+		os.Exit(1)
+	}
+
 	sessionManager := session.NewSessionManager(
 		mainCtx,
-		storage,
+		repo.NewSessionRepo(storage),
 		time.Duration(10*time.Second), //gcInterval
 		time.Duration(10*time.Minute), //idleExpiration
 		time.Duration(30*time.Minute), //absoluteExpiration
 		"session_id",                  //cookieName
 	)
-
-	if err := uh.InitValidator(); err != nil {
-		l.Error("Init validator error", "error", err.Error())
-		os.Exit(1)
-	}
 
 	userRepo := repo.NewUserRepository(storage)
 	userService := us.NewService(userRepo, l)
