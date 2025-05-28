@@ -14,4 +14,5 @@ utests:
 	cd $(CURRENT_DIR)/app &&\
 	 	go test ./internals/transport/handlers/user &&\
 		go test ./internals/services/user &&\
+		go test ./internals/database/repositories &&\
 		go test ./pkg/session
