@@ -5,8 +5,6 @@ import (
 	"errors"
 	"login/pkg/session"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type sessionRepo struct {
@@ -71,13 +69,14 @@ func (sr sessionRepo) Write(ctx context.Context, session *session.Session) (err 
 		}
 	}()
 
-	readSQL := `select user_id from sessions where id = $1 `
+	selectSQL := `select user_id from sessions where id = $1`
+	insertSQL := `insert into sessions(id, user_id, updated_at, last_activity_at) values ($1, $2, $3, $4)`
+	updateSQL := `update sessions set id = $1, updated_at = $2, last_activity_at = $3 where user_id = $4`
 	var userId string
 
-	if err := tx.QueryRow(ctx, readSQL, session.Id).Scan(&userId); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			sql := `insert into sessions(id, user_id, updated_at, last_activity_at) values ($1, $2, $3, $4)`
-			if _, err := tx.Exec(ctx, sql, session.Id, session.UserId, session.LastUpdateAt, session.LastActivityAt); err != nil {
+	if err := tx.QueryRow(ctx, selectSQL, session.Id).Scan(&userId); err != nil {
+		if errors.Is(err, ErrNoRows) {
+			if _, err := tx.Exec(ctx, insertSQL, session.Id, session.UserId, session.LastUpdateAt, session.LastActivityAt); err != nil {
 				return err
 			}
 			return nil
@@ -85,7 +84,6 @@ func (sr sessionRepo) Write(ctx context.Context, session *session.Session) (err 
 		return err
 	}
 
-	updateSQL := `update sessions set id = $1, updated_at = $2, last_activity_at = $3 where user_id = $4`
 	if _, err := tx.Exec(ctx, updateSQL, session.Id, session.LastUpdateAt, session.LastActivityAt, session.UserId); err != nil {
 		return err
 	}

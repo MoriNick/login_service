@@ -56,7 +56,7 @@ func main() {
 		"session_id",                  //cookieName
 	)
 
-	userRepo := repo.NewUserRepository(storage)
+	userRepo := repo.NewUserRepo(storage)
 	userService := us.NewService(userRepo, l)
 	userHandler := uh.GetHandler(userService, sessionManager, l)
 	userHandler.Register(router)

@@ -11,7 +11,7 @@ type UserRepository struct {
 	st Storage
 }
 
-func NewUserRepository(s Storage) *UserRepository {
+func NewUserRepo(s Storage) *UserRepository {
 	return &UserRepository{s}
 }
 
@@ -45,9 +45,6 @@ func (ur *UserRepository) SelectAllUsers(ctx context.Context, limit, offset uint
 	sql := `select id, email, nickname, password from users limit $1 offset $2`
 	rows, err := ur.st.Query(ctx, sql, limit, offset)
 	if err != nil {
-		if errors.Is(err, ErrNoRows) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	defer rows.Close()
@@ -62,8 +59,8 @@ func (ur *UserRepository) SelectAllUsers(ctx context.Context, limit, offset uint
 		users = append(users, user)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if rows.Err() != nil {
+		return nil, rows.Err()
 	}
 
 	return users, nil
@@ -100,7 +97,7 @@ func (ur *UserRepository) SelectUserByNickname(ctx context.Context, nickname str
 }
 
 func (ur *UserRepository) UpdateUser(ctx context.Context, user *models.User) error {
-	sql := `update users set email = $1, nickname = #2, password = $3 where id = $4`
+	sql := `update users set email = $1, nickname = $2, password = $3 where id = $4`
 
 	_, err := ur.st.Exec(ctx, sql, user.Email, user.Nickname, user.Password, user.Id)
 
