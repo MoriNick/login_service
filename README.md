@@ -6,7 +6,7 @@ The application starts on port 5000. Postgres port is standart: 5432.
 ## Environment variables
 
 Application support next variables:
-* LOG_LEVEL=INFO|ERROR environment variable for changing log level
+* LOG_LEVEL=DEBUG|INFO|WARN|ERROR environment variable for changing log level
 * HOST=localhost environment variable for setting application hostname
 * PORT=5000 environment variable for setting application port
 * DB_HOST=pgdb environment variable for setting database hostname
