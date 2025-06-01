@@ -3,7 +3,6 @@ package user
 import (
 	"context"
 	"encoding/base64"
-	"log/slog"
 
 	"login/internals/models"
 
@@ -25,12 +24,11 @@ func hashPassword(p string) string {
 }
 
 type UserService struct {
-	log  *slog.Logger
 	repo UserRepository
 }
 
-func NewService(repo UserRepository, log *slog.Logger) *UserService {
-	return &UserService{log, repo}
+func NewService(repo UserRepository) *UserService {
+	return &UserService{repo}
 }
 
 func (us *UserService) Registration(ctx context.Context, email, nickname, password string) (string, error) {

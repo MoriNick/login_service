@@ -57,7 +57,7 @@ func main() {
 	)
 
 	userRepo := repo.NewUserRepo(storage)
-	userService := us.NewService(userRepo, l)
+	userService := us.NewService(userRepo)
 	userHandler := uh.GetHandler(userService, sessionManager, l)
 	userHandler.Register(router)
 
